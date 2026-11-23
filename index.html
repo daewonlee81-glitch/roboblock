@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>로보블록 에디터</title>
-<meta name="description" content="ESP32 로봇(축구로봇·미들봇·스모)을 블록으로 코딩하고 ESP32 핀 신호를 눈으로 확인하는 교육용 에디터">
+<title>로보블록 에디터 · RoboMakers</title>
+<meta name="description" content="RoboMakers ESP32 로봇(축구로봇·미들봇·스모)을 블록으로 코딩하고 ESP32 핀 신호를 눈으로 확인하는 교육용 에디터">
+<link rel="icon" type="image/png" href="data:image/png;base64,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">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
@@ -44,7 +45,8 @@ body{background:var(--bg);color:var(--ink);font-family:var(--font-ui);font-size:
 .app{height:100%;display:flex;flex-direction:column;gap:12px;padding-block:12px;
   padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));box-sizing:border-box}
 .bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
-.brand{display:flex;align-items:baseline;gap:8px;margin-right:auto;min-width:0}
+.brand{display:flex;align-items:center;gap:8px;margin-right:auto;min-width:0}
+.brand .logo{width:30px;height:30px;flex:none}
 .brand b{font-size:19px;font-weight:700;letter-spacing:-.01em}
 .brand span{font-size:12px;color:var(--muted)}
 .group{display:flex;align-items:center;gap:6px}
@@ -61,7 +63,14 @@ body{background:var(--bg);color:var(--ink);font-family:var(--font-ui);font-size:
 .btn.linked{background:var(--pill-run);border-color:var(--run);color:var(--pill-run-ink)}
 .note p + p, .note p + .row, .note .row + p{margin-top:8px}
 .warn-t{color:var(--stop)}
-.layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(320px,.85fr) minmax(0,1.5fr);gap:12px}
+.layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(240px,var(--lw,38%)) 14px minmax(0,1fr);gap:0}
+.split{position:relative;cursor:col-resize;touch-action:none;display:flex;align-items:center;justify-content:center;border-radius:6px}
+.split::before{content:"";width:4px;height:44px;border-radius:2px;background:var(--line);transition:background .15s,height .15s}
+.split:hover::before,.split:focus-visible::before,.split.drag::before{background:var(--accent);height:72px}
+.split:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+body.resizing{cursor:col-resize;user-select:none;-webkit-user-select:none}
+body.resizing.rows{cursor:row-resize}
+body.resizing #blocklyDiv{pointer-events:none}
 .ws{position:relative;min-height:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--ws-bg)}
 #blocklyDiv{position:absolute;inset:0}
 .zoom{position:absolute;right:26px;bottom:26px;display:flex;gap:6px;z-index:5}
@@ -81,11 +90,14 @@ details.card > summary{cursor:pointer;font-weight:700;font-size:13px}
 /* 배선도 */
 .wiring-svg{overflow-x:auto;border-radius:8px;background:var(--ws-bg);border:1px solid var(--line)}
 .wiring-svg svg{display:block;min-width:760px;width:100%;height:auto}
+.wiring-svg.fit{overflow:hidden}
+.wiring-svg.fit svg{min-width:0;max-height:calc(100vh - 190px);margin:0 auto}
+#wireCard.full .wiring-svg.fit svg{max-height:calc(100vh - 130px)}
 .rot{transform-box:fill-box;transform-origin:center}
 .rot.spin{animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 #wireCard.full{position:fixed;inset:12px;z-index:60;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,.35)}
-#wireCard.full .wiring-svg svg{min-width:1080px}
+#wireCard.full .wiring-svg:not(.fit) svg{min-width:1080px}
 @media (prefers-reduced-motion: reduce){ .rot.spin{animation:none} }
 .wb{fill:none;stroke-width:1.8;opacity:.32}
 .wa{fill:none;stroke-width:3.4;opacity:0;stroke-linejoin:round;transition:opacity .12s}
@@ -157,12 +169,14 @@ select.warn{border-color:var(--accent)}
 .code{margin:0;background:var(--chip);border-radius:8px;padding:10px 12px;font-family:var(--font-mono);font-size:12px;line-height:1.55;overflow-x:auto;max-height:360px;color:var(--ink)}
 .note{font-size:13px;line-height:1.6}
 .note p{margin:0}
-@media (max-width:1100px){ .layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr)} }
 @media (max-width:900px){
   html,body{height:auto}
   .app{height:auto}
-  .layout{grid-template-columns:minmax(0,1fr)}
-  .ws{height:52vh;min-height:360px}
+  .layout{grid-template-columns:minmax(0,1fr);row-gap:0}
+  .ws{height:var(--wh,52vh);min-height:240px}
+  .split{cursor:row-resize;height:22px}
+  .split::before{width:56px;height:4px}
+  .split:hover::before,.split:focus-visible::before,.split.drag::before{width:88px;height:4px}
   .side{overflow:visible}
 }
 </style>
@@ -171,7 +185,7 @@ select.warn{border-color:var(--accent)}
 <body>
 <div class="app">
   <header class="bar">
-    <div class="brand"><b>로보블록</b><span>프로토타입 · ESP32 신호 보기</span></div>
+    <div class="brand"><img class="logo" src="data:image/png;base64,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" alt="RoboMakers" width="30" height="30"><b>로보블록</b><span>RoboMakers · ESP32 신호 보기</span></div>
     <div class="group" role="group" aria-label="로봇 선택">
       <label>로봇</label>
       <div class="seg" id="robotSeg">
@@ -205,6 +219,8 @@ select.warn{border-color:var(--accent)}
       </div>
     </section>
 
+    <div class="split" id="split" role="separator" aria-orientation="vertical" aria-label="블록 창과 오른쪽 창 크기 조절" aria-valuemin="0" aria-valuemax="100" tabindex="0" title="끌어서 창 크기 조절 · 두 번 누르면 원래대로"></div>
+
     <aside class="side">
       <div class="card" id="connectCard" hidden>
         <div class="head"><h2>로봇 연결</h2><button type="button" class="btn sm" id="connectClose">닫기</button></div>
@@ -212,7 +228,7 @@ select.warn{border-color:var(--accent)}
       </div>
 
       <div class="card" id="wireCard">
-        <div class="head"><h2 id="wireTitle">ESP32 배선과 신호 · 축구로봇</h2><div class="row"><span class="pill" id="statusPill">대기</span><button type="button" class="btn sm" id="wireFull">크게 보기</button></div></div>
+        <div class="head"><h2 id="wireTitle">ESP32 배선과 신호 · 축구로봇</h2><div class="row"><span class="pill" id="statusPill">대기</span><button type="button" class="btn sm" id="wireFit" aria-pressed="true">전체 보기</button><button type="button" class="btn sm" id="wireFull">크게 보기</button></div></div>
         <div class="wiring-svg" id="wiringSvg"></div>
         <div class="legend">
           <span><i style="background:#E07A1F"></i>PWM (모터·서보)</span>
@@ -223,7 +239,7 @@ select.warn{border-color:var(--accent)}
           <span><i style="background:#5AA9E6"></i>I²C SCL</span>
           <span><i style="background:#C0392B"></i>드라이버 출력 (모터·부하 전원)</span>
         </div>
-        <div class="meta">ESP32 → 드라이버 모듈(DRV8871 · PCA9685 · MOSFET) → 모터·서보·펌프 순서로 그렸습니다. 좁은 화면에서는 옆으로 밀어 보거나 크게 보기를 누르세요. 굵게 빛나는 선이 지금 신호가 나가거나 들어오는 선입니다. 흐르는 점선은 PWM·펄스, 꽉 찬 선은 HIGH, 흐린 선은 LOW 또는 대기입니다. 카드를 누르면 그 장치의 선만 강조합니다.</div>
+        <div class="meta">ESP32 → 드라이버 모듈(DRV8871 · PCA9685 · MOSFET) → 모터·서보·펌프 순서로 그렸습니다. 실행을 누르면 배선도 전체가 한눈에 보이게 바뀝니다. 글자를 크게 보려면 "확대 보기"나 "크게 보기"를 누르거나, 블록 창과 이 창 사이의 막대를 끌어 넓이를 바꾸세요. 굵게 빛나는 선이 지금 신호가 나가거나 들어오는 선입니다. 흐르는 점선은 PWM·펄스, 꽉 찬 선은 HIGH, 흐린 선은 LOW 또는 대기입니다. 카드를 누르면 그 장치의 선만 강조합니다.</div>
         <div class="row">
           <button type="button" class="btn sm" id="bootBtn">로봇 버튼 (BOOT)</button>
           <span class="meta" id="simMsg">블록을 조립하고 실행을 누르세요.</span>
@@ -1542,6 +1558,7 @@ async function startRun(){
   const types = new Set(ws.getAllBlocks(false).map(b => b.type));
   run = {stopped:false, tasks:new Set(), vars:new Map(), frames:[], manual:false, padOwned:['rb_pad_pressed','rb_pad_axis','rb_pad_connected'].some(t => types.has(t))};
   pinBlockSig.clear(); oledText = ''; stopDrive();
+  showWholeWiring();
   setStatus('준비', 'wait'); setButtons(true); setMsg(robotKey === 'sumo' ? '대회 규정대로 3초 뒤 출발합니다.' : '1초 뒤 출발합니다.');
   const delay = ROBOTS[robotKey].delay, ts = performance.now();
   countdown = delay/1000;
@@ -2066,6 +2083,79 @@ new MutationObserver(syncTheme).observe(document.documentElement, {attributes:tr
 window.addEventListener('resize', () => Blockly.svgResize(ws));
 if (window.ResizeObserver) new ResizeObserver(() => Blockly.svgResize(ws)).observe(document.querySelector('.ws'));
 
+
+/* ───────────── 창 크기 조절 (블록 창 ↔ 오른쪽 창) ─────────────
+   가운데 막대를 끌면 넓이가 바뀐다. 폰처럼 위아래로 쌓인 화면에서는 블록 창의 높이가 바뀐다.
+   키보드 ←→(↑↓)로도 움직이고, 두 번 누르면 원래대로. */
+const layoutEl = document.querySelector('.layout'), splitEl = $('#split'), wsEl = document.querySelector('.ws');
+const stackedLayout = () => !!(window.matchMedia && window.matchMedia('(max-width:900px)').matches);
+let splitSaved = store.get('rb.split', {}) || {};
+function clampW(w){ return Math.round(Math.max(240, Math.min(layoutEl.clientWidth - 14 - 340, w))); }
+function clampH(h){ return Math.round(Math.max(240, Math.min(window.innerHeight*0.85, h))); }
+function applySplit(){
+  if (stackedLayout()){
+    splitEl.setAttribute('aria-orientation', 'horizontal');
+    if (splitSaved.h) layoutEl.style.setProperty('--wh', clampH(splitSaved.h) + 'px'); else layoutEl.style.removeProperty('--wh');
+  } else {
+    splitEl.setAttribute('aria-orientation', 'vertical');
+    if (splitSaved.w) layoutEl.style.setProperty('--lw', clampW(splitSaved.w) + 'px'); else layoutEl.style.removeProperty('--lw');
+    const pct = Math.round(wsEl.getBoundingClientRect().width / Math.max(1, layoutEl.clientWidth) * 100);
+    splitEl.setAttribute('aria-valuenow', String(pct));
+  }
+  Blockly.svgResize(ws);
+}
+function setSplit(v){
+  if (stackedLayout()) splitSaved.h = clampH(v); else splitSaved.w = clampW(v);
+  store.set('rb.split', splitSaved); applySplit();
+}
+(function(){
+  let dragging = false;
+  splitEl.addEventListener('pointerdown', e => {
+    dragging = true; splitEl.classList.add('drag');
+    document.body.classList.add('resizing'); document.body.classList.toggle('rows', stackedLayout());
+    try{ splitEl.setPointerCapture(e.pointerId); }catch(_){}
+    e.preventDefault();
+  });
+  splitEl.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    if (stackedLayout()) setSplit(e.clientY - wsEl.getBoundingClientRect().top);
+    else setSplit(e.clientX - layoutEl.getBoundingClientRect().left);
+  });
+  const end = () => { if (!dragging) return; dragging = false; splitEl.classList.remove('drag'); document.body.classList.remove('resizing', 'rows'); renderWiring(); };
+  splitEl.addEventListener('pointerup', end); splitEl.addEventListener('pointercancel', end);
+  splitEl.addEventListener('dblclick', () => { splitSaved = {}; store.set('rb.split', splitSaved); applySplit(); renderWiring(); });
+  splitEl.addEventListener('keydown', e => {
+    const r = wsEl.getBoundingClientRect(), st = stackedLayout(), step = e.shiftKey ? 96 : 32;
+    let v = null;
+    if (!st && e.key === 'ArrowLeft') v = r.width - step;
+    if (!st && e.key === 'ArrowRight') v = r.width + step;
+    if (st && e.key === 'ArrowUp') v = r.height - step;
+    if (st && e.key === 'ArrowDown') v = r.height + step;
+    if (e.key === 'Home' || e.key === 'Enter'){ splitSaved = {}; store.set('rb.split', splitSaved); applySplit(); e.preventDefault(); return; }
+    if (v != null){ setSplit(v); e.preventDefault(); }
+  });
+  window.addEventListener('resize', applySplit);
+})();
+
+/* ───────────── 배선도 전체 보기 ─────────────
+   전체 보기: 배선도 전체가 카드 폭(과 화면 높이)에 들어오게 줄인다. 확대 보기: 글자가 큰 대신 옆으로 밀어 본다.
+   실행을 누르면 전체 보기로 바꾸고 배선도가 보이게 스크롤한다. */
+function setWireFit(on){
+  $('#wiringSvg').classList.toggle('fit', on);
+  const b = $('#wireFit'); b.setAttribute('aria-pressed', String(on)); b.textContent = on ? '전체 보기' : '확대 보기';
+  b.title = on ? '눌러서 확대 보기 (옆으로 밀어 봄)' : '눌러서 전체 보기 (한눈에)';
+  store.set('rb.wireFit', on);
+}
+function showWholeWiring(){
+  setWireFit(true);
+  const card = $('#wireCard');
+  if (card.classList.contains('full')) return;
+  if (stackedLayout()) card.scrollIntoView({behavior:'smooth', block:'start'});
+  else { const side = document.querySelector('.side'); side.scrollTo({top: side.scrollTop + card.getBoundingClientRect().top - side.getBoundingClientRect().top, behavior:'smooth'}); }
+}
+$('#wireFit').addEventListener('click', () => setWireFit(!$('#wiringSvg').classList.contains('fit')));
+setWireFit(store.get('rb.wireFit', true) !== false);
+applySplit();
 applyLevel(level);
 applyRobot(robotKey, false);
 renderLinkUi();
