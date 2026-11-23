@@ -90,3 +90,8 @@ Pages는 https로 서비스되므로, 나중에 크롬·엣지·안드로이드�
 | `.nojekyll` | GitHub Pages가 파일을 그대로 서비스하게 함 |
 
 학생이 만든 블록과 장치 구성은 각자의 브라우저(localStorage)에만 저장됩니다.
+
+## 개발 · 버그 신고
+
+- 개발: RoboMakers (GitHub [@daewonlee81-glitch](https://github.com/daewonlee81-glitch))
+- 버그 신고: 에디터 아래쪽 **버그 신고**를 누르면 진단 정보(브라우저, 로봇, 펌웨어, 핀, 최근 오류)가 채워진 GitHub Issue 작성 화면이 열립니다. 직접 쓰려면 [Issues](https://github.com/daewonlee81-glitch/roboblock/issues/new)에 올려 주세요.
