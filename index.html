@@ -1,0 +1,1787 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>로보블록 에디터</title>
+<meta name="description" content="ESP32 로봇(축구로봇·미들봇·스모)을 블록으로 코딩하고 ESP32 핀 신호를 눈으로 확인하는 교육용 에디터">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: 상단 조작 막대 + (블록 작업 공간 | ESP32 배선·신호 패널). 폰에서는 위아래로 쌓인다. */
+:root{
+  --bg:#EDF0F3; --panel:#FFFFFF; --ink:#18202B; --muted:#5A6577; --line:#D5DBE3; --chip:#E1E6ED;
+  --accent:#F2A900; --accent-ink:#1E1600; --run:#1F8F4E; --on-run:#FFFFFF; --stop:#C93C3C; --on-stop:#FFFFFF;
+  --ws-bg:#F7F9FB; --oled-bg:#04070B; --oled-ink:#7FE3FF;
+  --pill-idle:#E1E6ED; --pill-run:#D6F2E1; --pill-run-ink:#14653A; --pill-wait:#FFF0C7; --pill-wait-ink:#7A5600; --pill-err:#FBE0E0; --pill-err-ink:#9A2424;
+  --spark:#2F74D0; --spark-fill:rgba(47,116,208,.12);
+  --font-ui:'IBM Plex Sans KR','Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F141A; --panel:#161D26; --ink:#E5E9EF; --muted:#98A3B5; --line:#2A3441; --chip:#212A35;
+    --accent:#F5B92E; --accent-ink:#1E1600; --run:#2FA563; --on-run:#FFFFFF; --stop:#D85050; --on-stop:#FFFFFF;
+    --ws-bg:#131920; --oled-bg:#04070B; --oled-ink:#7FE3FF;
+    --pill-idle:#212A35; --pill-run:#173A28; --pill-run-ink:#7FE0A8; --pill-wait:#3A3016; --pill-wait-ink:#F5CF6B; --pill-err:#3D1C1C; --pill-err-ink:#F3A0A0;
+    --spark:#6FA8FF; --spark-fill:rgba(111,168,255,.14);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F141A; --panel:#161D26; --ink:#E5E9EF; --muted:#98A3B5; --line:#2A3441; --chip:#212A35;
+  --accent:#F5B92E; --accent-ink:#1E1600; --run:#2FA563; --on-run:#FFFFFF; --stop:#D85050; --on-stop:#FFFFFF;
+  --ws-bg:#131920; --oled-bg:#04070B; --oled-ink:#7FE3FF;
+  --pill-idle:#212A35; --pill-run:#173A28; --pill-run-ink:#7FE0A8; --pill-wait:#3A3016; --pill-wait-ink:#F5CF6B; --pill-err:#3D1C1C; --pill-err-ink:#F3A0A0;
+  --spark:#6FA8FF; --spark-fill:rgba(111,168,255,.14);
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{margin:0}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-ui);font-size:14px}
+.app{height:100%;display:flex;flex-direction:column;gap:12px;padding-block:12px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));box-sizing:border-box}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
+.brand{display:flex;align-items:baseline;gap:8px;margin-right:auto;min-width:0}
+.brand b{font-size:19px;font-weight:700;letter-spacing:-.01em}
+.brand span{font-size:12px;color:var(--muted)}
+.group{display:flex;align-items:center;gap:6px}
+.group label{font-size:12px;color:var(--muted)}
+.seg{display:inline-flex;background:var(--chip);border-radius:10px;padding:3px;gap:2px}
+.seg button{font:inherit;font-size:13px;font-weight:600;color:var(--muted);background:transparent;border:0;border-radius:8px;padding:6px 10px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--panel);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.seg button:focus-visible,.btn:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;padding:7px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.run{background:var(--run);border-color:var(--run);color:var(--on-run)}
+.btn.stop{background:var(--stop);border-color:var(--stop);color:var(--on-stop)}
+.btn.sm{padding:3px 9px;font-size:12px}
+.layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(320px,.85fr) minmax(0,1.5fr);gap:12px}
+.ws{position:relative;min-height:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--ws-bg)}
+#blocklyDiv{position:absolute;inset:0}
+.zoom{position:absolute;right:26px;bottom:26px;display:flex;gap:6px;z-index:5}
+.zoom .btn{padding:6px 11px;font-size:14px;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.side{min-height:0;min-width:0;overflow:auto;display:flex;flex-direction:column;gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h2{font-size:13px;font-weight:700;margin:0;letter-spacing:.02em}
+details.card > summary{cursor:pointer;font-weight:700;font-size:13px}
+.head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.pill{font-size:12px;font-weight:600;border-radius:999px;padding:3px 10px;background:var(--pill-idle);color:var(--muted);white-space:nowrap}
+.pill.run{background:var(--pill-run);color:var(--pill-run-ink)}
+.pill.wait{background:var(--pill-wait);color:var(--pill-wait-ink)}
+.pill.err{background:var(--pill-err);color:var(--pill-err-ink)}
+.meta{font-size:12px;color:var(--muted)}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+
+/* 배선도 */
+.wiring-svg{overflow-x:auto;border-radius:8px;background:var(--ws-bg);border:1px solid var(--line)}
+.wiring-svg svg{display:block;min-width:760px;width:100%;height:auto}
+.rot{transform-box:fill-box;transform-origin:center}
+.rot.spin{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#wireCard.full{position:fixed;inset:12px;z-index:60;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,.35)}
+#wireCard.full .wiring-svg svg{min-width:1080px}
+@media (prefers-reduced-motion: reduce){ .rot.spin{animation:none} }
+.wb{fill:none;stroke-width:1.8;opacity:.32}
+.wa{fill:none;stroke-width:3.4;opacity:0;stroke-linejoin:round;transition:opacity .12s}
+.wa.on{opacity:1}
+.wa.flow{stroke-dasharray:8 6;animation:flow 1s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-28}}
+.pd{transition:r .12s}
+.pd.on{stroke:var(--accent);stroke-width:2.4}
+@media (prefers-reduced-motion: reduce){ .wa.flow{animation:none;stroke-dasharray:none} }
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+
+/* 장치 편집 */
+.add-row{display:flex;gap:6px}
+select,.add-row select{font:inherit;font-size:13px;padding:4px 6px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink);min-width:0}
+.add-row select{flex:1}
+select.bad{border-color:var(--stop);box-shadow:0 0 0 1px var(--stop)}
+select.warn{border-color:var(--accent)}
+.devs{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.dev{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.dev.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.dev-head{display:flex;gap:6px;align-items:center}
+.dev-head input{flex:1;min-width:0;font:inherit;font-weight:600;font-size:13px;border:1px solid transparent;border-radius:6px;padding:3px 6px;background:transparent;color:var(--ink)}
+.dev-head input:hover,.dev-head input:focus{border-color:var(--line)}
+.dev-type{font-size:11px;color:var(--muted)}
+.dev-pins{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 8px;align-items:center;font-size:12px}
+.dev-pins i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.issues{margin:0;padding-left:18px;font-size:12.5px;line-height:1.55}
+.issues li.err{color:var(--pill-err-ink)}
+.issues li.warn{color:var(--pill-wait-ink)}
+.issues li.ok{color:var(--pill-run-ink)}
+
+/* 모니터 */
+.mon{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
+.mrow{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;align-items:center;min-width:0}
+.mrow .n{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mrow .t{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mrow .v{font-family:var(--font-mono);font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.mrow canvas{grid-column:1 / -1;width:100%;height:28px;display:block}
+.mrow input[type=range]{grid-column:1 / -1;width:100%;accent-color:var(--accent)}
+.mrow .vi{grid-column:1 / -1;font-size:11px;color:var(--muted)}
+
+/* Xbox 컨트롤러 */
+.gp{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center}
+.gp-row{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.stick{position:relative;width:92px;height:92px;border-radius:50%;background:var(--chip);border:1px solid var(--line);touch-action:none;margin:0 auto;cursor:grab}
+.stick .knob{position:absolute;left:50%;top:50%;width:36px;height:36px;margin:-18px 0 0 -18px;border-radius:50%;background:var(--panel);border:1px solid var(--line);box-shadow:0 1px 3px rgba(0,0,0,.2);pointer-events:none}
+.stick-label{text-align:center;font-size:11px;color:var(--muted);margin-top:4px}
+.gbtn{min-width:40px;justify-content:center;touch-action:none;user-select:none;-webkit-user-select:none}
+.gbtn.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.cross{display:grid;grid-template-columns:repeat(3,40px);grid-template-rows:repeat(3,34px);gap:4px;justify-content:center}
+.cross .gbtn{min-width:0;padding:0;font-weight:700}
+.c-n{grid-area:1/2}.c-w{grid-area:2/1}.c-e{grid-area:2/3}.c-s{grid-area:3/2}
+.xa{color:#1E9E50}.xb{color:#D64545}.xx{color:#2F74D0}.xy{color:#C99400}
+.rumble{animation:rumble .08s linear infinite}
+@keyframes rumble{0%{transform:translateX(-1px)}50%{transform:translateX(1px)}100%{transform:translateX(-1px)}}
+@media (prefers-reduced-motion: reduce){ .rumble{animation:none;outline:2px solid var(--accent)} }
+
+.oled{background:var(--oled-bg);color:var(--oled-ink);font-family:var(--font-mono);font-size:12px;line-height:1.55;border-radius:8px;padding:10px 12px;white-space:pre;overflow:hidden;min-height:76px;border:2px solid var(--line)}
+.code{margin:0;background:var(--chip);border-radius:8px;padding:10px 12px;font-family:var(--font-mono);font-size:12px;line-height:1.55;overflow-x:auto;max-height:360px;color:var(--ink)}
+.note{font-size:13px;line-height:1.6}
+.note p{margin:0}
+@media (max-width:1100px){ .layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr)} }
+@media (max-width:900px){
+  html,body{height:auto}
+  .app{height:auto}
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .ws{height:52vh;min-height:360px}
+  .side{overflow:visible}
+}
+</style>
+
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand"><b>로보블록</b><span>프로토타입 · ESP32 신호 보기</span></div>
+    <div class="group" role="group" aria-label="로봇 선택">
+      <label>로봇</label>
+      <div class="seg" id="robotSeg">
+        <button type="button" id="r-soccer" data-robot="soccer" aria-pressed="true">축구로봇</button>
+        <button type="button" id="r-middle" data-robot="middle" aria-pressed="false">미들봇</button>
+        <button type="button" id="r-sumo" data-robot="sumo" aria-pressed="false">스모</button>
+      </div>
+    </div>
+    <div class="group" role="group" aria-label="레벨 선택">
+      <label>레벨</label>
+      <div class="seg" id="levelSeg">
+        <button type="button" id="l-1" data-level="1" aria-pressed="true">1 뚝딱</button>
+        <button type="button" id="l-2" data-level="2" aria-pressed="false">2 블록</button>
+        <button type="button" id="l-3" data-level="3" aria-pressed="false">3 코드</button>
+      </div>
+    </div>
+    <div class="group">
+      <button type="button" class="btn run" id="runBtn">▶ 실행</button>
+      <button type="button" class="btn stop" id="stopBtn" disabled>■ 정지</button>
+      <button type="button" class="btn" id="connectBtn">로봇 연결</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="ws" aria-label="블록 작업 공간">
+      <div id="blocklyDiv"></div>
+      <div class="zoom">
+        <button type="button" class="btn" id="zoomIn" aria-label="확대">+</button>
+        <button type="button" class="btn" id="zoomOut" aria-label="축소">−</button>
+        <button type="button" class="btn" id="zoomFit">맞춤</button>
+      </div>
+    </section>
+
+    <aside class="side">
+      <div class="card" id="connectCard" hidden>
+        <div class="head"><h2>로봇 연결</h2><button type="button" class="btn sm" id="connectClose">닫기</button></div>
+        <div class="note"><p>이 프로토타입은 ESP32 핀에 나갈 신호를 화면에서 보여줍니다. 펌웨어(기획서의 0단계)가 준비되면 크롬북·윈도우·안드로이드는 블루투스로, iPad는 로봇 Wi-Fi로 연결하고, 같은 화면에 실제 로봇의 신호가 들어옵니다.</p></div>
+      </div>
+
+      <div class="card" id="wireCard">
+        <div class="head"><h2 id="wireTitle">ESP32 배선과 신호 · 축구로봇</h2><div class="row"><span class="pill" id="statusPill">대기</span><button type="button" class="btn sm" id="wireFull">크게 보기</button></div></div>
+        <div class="wiring-svg" id="wiringSvg"></div>
+        <div class="legend">
+          <span><i style="background:#E07A1F"></i>PWM (모터·서보)</span>
+          <span><i style="background:#2E9E5B"></i>디지털 출력</span>
+          <span><i style="background:#12949A"></i>디지털 입력</span>
+          <span><i style="background:#8E5CC7"></i>아날로그 입력</span>
+          <span><i style="background:#2F74D0"></i>I²C SDA</span>
+          <span><i style="background:#5AA9E6"></i>I²C SCL</span>
+          <span><i style="background:#C0392B"></i>드라이버 출력 (모터·부하 전원)</span>
+        </div>
+        <div class="meta">ESP32 → 드라이버 모듈(DRV8871 · PCA9685 · MOSFET) → 모터·서보·펌프 순서로 그렸습니다. 좁은 화면에서는 옆으로 밀어 보거나 크게 보기를 누르세요. 굵게 빛나는 선이 지금 신호가 나가거나 들어오는 선입니다. 흐르는 점선은 PWM·펄스, 꽉 찬 선은 HIGH, 흐린 선은 LOW 또는 대기입니다. 카드를 누르면 그 장치의 선만 강조합니다.</div>
+        <div class="row">
+          <button type="button" class="btn sm" id="bootBtn">로봇 버튼 (BOOT)</button>
+          <span class="meta" id="simMsg">블록을 조립하고 실행을 누르세요.</span>
+        </div>
+      </div>
+
+      <details class="card" id="devCard">
+        <summary>장치 추가 · 핀 바꾸기 (모터·센서 확장)</summary>
+        <div class="add-row">
+          <select id="addType" aria-label="추가할 장치"></select>
+          <button type="button" class="btn sm" id="addDev">장치 추가</button>
+        </div>
+        <div class="devs" id="devList"></div>
+        <ul class="issues" id="pinIssues"></ul>
+        <div class="row"><button type="button" class="btn sm" id="devReset">기본 구성으로</button><span class="meta">NodeMCU-32S 38핀 배열입니다. 보드마다 다를 수 있으니 실물 인쇄를 확인하세요.</span></div>
+      </details>
+
+      <div class="card">
+        <div class="head"><h2>실시간 모니터</h2><span class="meta">10 Hz · 최근 6초</span></div>
+        <div class="mon" id="monitor"></div>
+      </div>
+
+      <div class="card" id="padCard">
+        <div class="head"><h2>Xbox 컨트롤러 (Bluepad32)</h2><span class="pill" id="padMode">조종 모드</span></div>
+        <div class="gp-row">
+          <button type="button" class="btn gbtn" id="gb-LB" data-btn="LB">LB</button>
+          <button type="button" class="btn gbtn" id="gb-LT" data-btn="LT">LT</button>
+          <button type="button" class="btn gbtn" id="gb-VIEW" data-btn="VIEW" aria-label="보기 버튼">⧉ 보기</button>
+          <button type="button" class="btn gbtn" id="gb-MENU" data-btn="MENU" aria-label="메뉴 버튼">≡ 메뉴</button>
+          <button type="button" class="btn gbtn" id="gb-RT" data-btn="RT">RT</button>
+          <button type="button" class="btn gbtn" id="gb-RB" data-btn="RB">RB</button>
+        </div>
+        <div class="gp">
+          <div><div class="stick" id="stickL" data-stick="L"><div class="knob"></div></div><div class="stick-label">왼쪽 스틱</div></div>
+          <div><div class="stick" id="stickR" data-stick="R"><div class="knob"></div></div><div class="stick-label">오른쪽 스틱</div></div>
+        </div>
+        <div class="gp">
+          <div class="cross">
+            <button type="button" class="btn gbtn c-n" id="gb-UP" data-btn="UP" aria-label="방향키 위">↑</button>
+            <button type="button" class="btn gbtn c-w" id="gb-LEFT" data-btn="LEFT" aria-label="방향키 왼쪽">←</button>
+            <button type="button" class="btn gbtn c-e" id="gb-RIGHT" data-btn="RIGHT" aria-label="방향키 오른쪽">→</button>
+            <button type="button" class="btn gbtn c-s" id="gb-DOWN" data-btn="DOWN" aria-label="방향키 아래">↓</button>
+          </div>
+          <div class="cross">
+            <button type="button" class="btn gbtn c-n xy" id="gb-Y" data-btn="Y">Y</button>
+            <button type="button" class="btn gbtn c-w xx" id="gb-X" data-btn="X">X</button>
+            <button type="button" class="btn gbtn c-e xb" id="gb-B" data-btn="B">B</button>
+            <button type="button" class="btn gbtn c-s xa" id="gb-A" data-btn="A">A</button>
+          </div>
+        </div>
+        <div class="meta" id="padHelp"></div>
+      </div>
+
+      <div class="card">
+        <h2>로봇 화면 (OLED)</h2>
+        <div class="oled" id="oled" aria-live="polite"></div>
+      </div>
+
+      <div class="card" id="codeCard" hidden>
+        <div class="head"><h2>C++ 코드 (레벨 3)</h2><button type="button" class="btn sm" id="copyBtn">복사</button></div>
+        <pre class="code" id="cppOut"></pre>
+        <div class="meta" id="sizeOut"></div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/blockly@11.2.1/blockly.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/blockly@11.2.1/msg/ko.js"></script>
+<script>
+(function(){
+'use strict';
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+const FONT_FAMILY = "'IBM Plex Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif";
+
+/* ───────────── 로봇 프로필 ───────────── */
+const ROBOTS = {
+  soccer:{ label:'축구로봇', tag:'RB-07', vmax:80, wid:18, mecanum:false, arm:false, delay:1000 },
+  middle:{ label:'미들봇',   tag:'MB-02', vmax:50, wid:26, mecanum:true,  arm:true,  delay:1000, battery:'3S LiPo 11.1 V (12 V 레일)', servoPower:'6 V 벅 (XL4015)' },
+  sumo:  { label:'스모',     tag:'SM-03', vmax:55, wid:18, mecanum:false, arm:false, delay:3000 }
+};
+const CELL = 20; // 1칸 = 20 cm (교사가 보정하는 값)
+// 미들봇(EEZYbotARM MK2) 팔 자세 {어깨°, 팔꿈치°}. 펌웨어 가동범위 어깨 20~120°, 팔꿈치 70~180° 안의 예시 값이며,
+// 실제 값은 교사가 자세 기록(JOG/SAVE_POSE)으로 로봇마다 저장한다.
+const POSES = {pick:[35,165], l1:[50,150], l2:[70,135], l3:[90,120], carry:[100,110]};
+const ARM_DEG_S = 110;      // ARM_STEP 2.2° × 50 Hz
+const VENT_MS = 350, DEADZONE = 18;
+
+/* ───────────── ESP32 핀 규칙 ───────────── */
+const ESP32_PINS = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,21,22,23,25,26,27,32,33,34,35,36,39];
+const FLASH = [6,7,8,9,10,11], INPUT_ONLY = [34,35,36,39], ADC1 = [32,33,34,35,36,39];
+const ADC2 = [0,2,4,12,13,14,15,25,26,27], STRAP = [0,2,5,12,15], SERIAL = [1,3];
+const pinOpts = list => list.map(p => ['GPIO ' + p, String(p)]);
+const OUT_PIN_OPTS = pinOpts(ESP32_PINS.filter(p => !FLASH.includes(p) && !INPUT_ONLY.includes(p)));
+const IN_PIN_OPTS = pinOpts(ESP32_PINS.filter(p => !FLASH.includes(p)));
+const ADC_PIN_OPTS = pinOpts(ADC1);
+const PAD_BTNS = [['A','A'],['B','B'],['X','X'],['Y','Y'],['LB','LB'],['RB','RB'],['↑','UP'],['↓','DOWN'],['←','LEFT'],['→','RIGHT'],['보기','VIEW'],['메뉴','MENU']];
+
+/* ───────────── 장치 (확장 가능) ───────────── */
+// roles: [핀 이름, 종류] — pwm · out 디지털 출력 · in 디지털 입력 · adc 아날로그 입력 · sda/scl I²C
+const DEVICE_TYPES = {
+  drv8871: {label:'DC 모터 · DRV8871', short:'DC 모터 · DRV8871', defaultName:'DC 모터', roles:[['IN1','pwm'],['IN2','pwm']], pwmUse:2, power:'VM 배터리 + · GND 공통'},
+  encmotor:{label:'엔코더 DC 모터 · DRV8871', short:'엔코더 모터 · DRV8871', defaultName:'엔코더 모터', roles:[['IN1','pwm'],['IN2','pwm'],['ENCA','in'],['ENCB','in']], pwmUse:2, power:'VM 배터리 + · 엔코더 3.3 V', cpr:360, rpm:300},
+  stepper: {label:'스테핑 모터 · A4988/DRV8825', short:'스테핑 · A4988', defaultName:'스테핑 모터', roles:[['STEP','out'],['DIR','out'],['EN','out']], power:'VMOT 배터리 + · 로직 3.3 V'},
+  servo:   {label:'서보 모터', short:'서보 · 50 Hz', defaultName:'서보', roles:[['SIG','pwm']], pwmUse:1, power:'V+ 5 V · GND 공통'},
+  mosfet:  {label:'MOSFET 출력 (펌프·밸브·솔레노이드)', short:'MOSFET 출력', defaultName:'MOSFET 출력', roles:[['GATE','out']], power:'부하 전원 배터리 +'},
+  led:     {label:'LED', short:'LED', defaultName:'LED', roles:[['SIG','out']], power:'직렬 저항 220 Ω~1 kΩ'},
+  buzzer:  {label:'부저', short:'부저', defaultName:'부저', roles:[['SIG','pwm']], pwmUse:1, power:'GND 공통'},
+  button:  {label:'버튼', short:'버튼 · 풀업 입력', defaultName:'버튼', roles:[['SIG','in']], power:'다른 쪽은 GND'},
+  irfloor: {label:'IR 반사 바닥 센서 (TCRT5000)', short:'IR 반사 · 아날로그', defaultName:'바닥 센서', roles:[['AO','adc']], power:'VCC 3.3 V', sensor:{min:0, max:100, def:50, unit:'', name:'밝기'}},
+  sharp:   {label:'Sharp GP2Y0A21 거리', short:'Sharp 거리 · 아날로그', defaultName:'Sharp 거리', roles:[['OUT','adc']], power:'VCC 5 V', sensor:{min:10, max:80, def:60, unit:'cm', name:'거리'}},
+  hcsr04:  {label:'초음파 HC-SR04', short:'초음파 HC-SR04', defaultName:'초음파', roles:[['TRIG','out'],['ECHO','in']], power:'VCC 5 V · ECHO 분압', sensor:{min:2, max:400, def:150, unit:'cm', name:'거리'}},
+  e18:     {label:'적외선 근접 E18-D80NK', short:'적외선 근접 · 디지털', defaultName:'근접 센서', roles:[['OUT','in']], power:'VCC 5 V · 출력 풀업', sensor:{min:0, max:1, def:0, unit:'', name:'감지', bool:true}},
+  tfluna:  {label:'TF-Luna 레이저 거리 (I²C)', short:'TF-Luna 레이저 · I²C', defaultName:'레이저 거리', roles:[['SDA','sda'],['SCL','scl']], addr:'0x10', power:'VCC 5 V', sensor:{min:20, max:300, def:150, unit:'cm', name:'거리'}},
+  vl53l0x: {label:'VL53L0X 레이저 거리 (I²C)', short:'VL53L0X 레이저 · I²C', defaultName:'VL53L0X', roles:[['SDA','sda'],['SCL','scl']], addr:'0x29', power:'VCC 3.3 V', sensor:{min:3, max:200, def:120, unit:'cm', name:'거리'}},
+  tcs3472: {label:'TCS3472 컬러 (I²C)', short:'TCS3472 컬러 · I²C', defaultName:'컬러 센서', roles:[['SDA','sda'],['SCL','scl']], addr:'0x29', power:'VCC 3.3 V', sensor:{min:0, max:100, def:50, unit:'', name:'밝기'}},
+  oled:    {label:'OLED SSD1306 (I²C)', short:'OLED · I²C', defaultName:'OLED', roles:[['SDA','sda'],['SCL','scl']], addr:'0x3C', power:'VCC 3.3 V'},
+  pca9685: {label:'PCA9685 서보 드라이버 (I²C)', short:'PCA9685 · 16채널 PWM', defaultName:'PCA9685', roles:[['SDA','sda'],['SCL','scl']], addr:'0x40', power:'V+ 서보 전원 6 V · VCC 3.3 V'},
+  pcaservo:{label:'서보 · PCA9685 채널', short:'서보 · PCA9685', defaultName:'서보', roles:[], pca:true, power:'PCA9685 V+'},
+  pcacont: {label:'360° 연속회전 서보 · PCA9685 채널', short:'360° 서보 · PCA9685', defaultName:'회전 서보', roles:[], pca:true, cont:true, power:'PCA9685 V+'},
+  vacuum:  {label:'진공 압력 센서 XGZP6847 (아날로그)', short:'진공 압력 · 아날로그', defaultName:'진공 압력', roles:[['OUT','adc']], power:'VCC 5 V · 출력 분압', sensor:{min:0, max:100, def:0, unit:'kPa', name:'진공도'}}
+};
+const ADDABLE = ['drv8871','encmotor','stepper','servo','pca9685','pcaservo','pcacont','mosfet','led','buzzer','button','irfloor','sharp','hcsr04','e18','tfluna','vl53l0x','tcs3472','vacuum','oled'];
+const DIST_TYPES = ['tfluna','vl53l0x','sharp','hcsr04'];
+const SENSOR_TYPES = ['tfluna','vl53l0x','sharp','hcsr04','irfloor','tcs3472','e18','vacuum','button'];
+function motorDev(id, name, pos, a, b){ return {id, type:'drv8871', name, pos, pins:{IN1:a, IN2:b}}; }
+function defaultDevices(key){
+  const drive = [motorDev('mFL','앞-왼쪽 모터','FL',32,33), motorDev('mFR','앞-오른쪽 모터','FR',27,4), motorDev('mBL','뒤-왼쪽 모터','BL',25,26), motorDev('mBR','뒤-오른쪽 모터','BR',22,21)];
+  const boot = {id:'boot', type:'button', name:'로봇 버튼 (BOOT)', pins:{SIG:0}};
+  if (key === 'middle') return [   // mecanum_eezybotarm_robot.ino 핀 배치
+    Object.assign(motorDev('mFL','앞-왼쪽 모터','FL',18,19), {note:'부팅 때 바퀴가 돌면 IN1·IN2에 10 kΩ 풀다운'}),
+    motorDev('mFR','앞-오른쪽 모터','FR',27,26), motorDev('mBL','뒤-왼쪽 모터','BL',25,33), motorDev('mBR','뒤-오른쪽 모터','BR',32,4),
+    {id:'pca', type:'pca9685', name:'PCA9685', pins:{SDA:21, SCL:22}},
+    {id:'sTt', type:'pcacont', name:'베이스 (360°)', arm:'tt', ch:0, pins:{}},
+    {id:'sSh', type:'pcaservo', name:'어깨 서보', arm:'sh', ch:1, min:20, max:120, pins:{}},
+    {id:'sEl', type:'pcaservo', name:'엘보 서보', arm:'el', ch:2, min:70, max:180, pins:{}},
+    {id:'pump', type:'mosfet', name:'진공펌프', tag:'pump', pins:{GATE:16}}, {id:'valve', type:'mosfet', name:'솔레노이드 밸브', tag:'valve', pins:{GATE:17}},
+    {id:'oled', type:'oled', name:'OLED (Wire1)', pins:{SDA:13, SCL:14}}, boot];
+  if (key === 'sumo') return [...drive,
+    {id:'oled', type:'oled', name:'OLED', pins:{SDA:16, SCL:17}}, {id:'luna', type:'tfluna', name:'앞 거리 (TF-Luna)', pins:{SDA:16, SCL:17}},
+    {id:'flL', type:'irfloor', name:'바닥 왼쪽', side:'L', pins:{AO:34}}, {id:'flR', type:'irfloor', name:'바닥 오른쪽', side:'R', pins:{AO:36}}, boot];
+  return [...drive, {id:'oled', type:'oled', name:'OLED', pins:{SDA:16, SCL:17}}, boot];
+}
+
+/* ───────────── 전역 상태 ───────────── */
+let robotKey = store.get('rb.robot', 'soccer');
+if (!ROBOTS[robotKey]) robotKey = 'soccer';
+let level = store.get('rb.level', 1);
+if (![1,2,3].includes(level)) level = 1;
+let devices = [];
+let focusDev = null;
+let run = null;                    // 실행 중인 프로그램 {stopped, tasks, vars, frames, manual, padOwned}
+let countdown = 0, t0 = performance.now(), oledText = '';
+const rt = new Map();              // 장치 id → 실행 상태
+const hist = new Map();            // 장치 id → 최근 값
+const pinBlockSig = new Map();     // 핀 블록이 직접 쓴 핀 → 신호
+const virt = {ballDir:0, ballStr:0};
+const pad = {LX:0, LY:0, RX:0, RY:0, LT:0, RT:0, btn:new Set(), connected:true};
+let bootDownUntil = 0;
+
+function loadDevices(){
+  const saved = store.get('rb.devices4.' + robotKey, null);
+  devices = Array.isArray(saved) && saved.length && saved.every(d => DEVICE_TYPES[d.type]) ? saved : defaultDevices(robotKey);
+}
+function saveDevices(){ store.set('rb.devices4.' + robotKey, devices); }
+function devById(id){ return devices.find(d => d.id === id); }
+function deviceUsingPin(p){ for (const d of devices) for (const r in d.pins) if (d.pins[r] === p) return [d, r]; return null; }
+function devOptions(types){
+  return function(){
+    const list = devices.filter(d => types.includes(d.type));
+    return list.length ? list.map(d => [d.name, d.id]) : [['(장치 추가에서 넣기)', '_none']];
+  };
+}
+function R(d){ // 장치 실행 상태
+  if (!rt.has(d.id)){
+    const T = DEVICE_TYPES[d.type];
+    const s = {cmd:0, brake:false, us:null, target:null, on:false, until:0, pos:0, goal:0, sps:0, en:false, count:0, rpm:0, flash:0, pressed:false,
+               value: T.sensor ? T.sensor.def : 0};
+    if (d.type === 'irfloor') s.value = robotKey === 'sumo' ? 8 : 50;
+    if (d.type === 'pcaservo'){ const lo = d.min ?? 0, hi = d.max ?? 180; s.deg = s.target = d.arm === 'sh' ? POSES.carry[0] : d.arm === 'el' ? POSES.carry[1] : Math.round((lo + hi)/2); }
+    if (d.type === 'pcacont') s.spd = 0;
+    if (d.type === 'servo' && d.arm){ s.us = s.target = 1500; }
+    rt.set(d.id, s);
+  }
+  return rt.get(d.id);
+}
+function resetRuntime(){ rt.clear(); hist.clear(); pinBlockSig.clear(); for (const d of devices) R(d); }
+
+/* ───────────── 블록 정의 ───────────── */
+const BLOCKS = [
+  // 이벤트
+  {cat:'event', level:1, robots:'all', json:{type:'rb_start', message0:'▶ 시작하면', nextStatement:null, style:'event_blocks', tooltip:'실행 버튼을 누르면 시작합니다.'}},
+  {cat:'event', level:2, robots:'all', json:{type:'rb_button', message0:'로봇 버튼을 누르면', nextStatement:null, style:'event_blocks'}},
+  {cat:'event', level:2, robots:['soccer','middle'], json:{type:'rb_pad', message0:'Xbox %1 를 누르면', args0:[{type:'field_dropdown', name:'PAD', options:PAD_BTNS}], nextStatement:null, style:'event_blocks', tooltip:'조종 중 이 버튼을 누르면 아래 블록이 실행됩니다 (매크로).'}},
+  // 움직임
+  {cat:'move', level:1, robots:'all', json:{type:'rb_move_cells', message0:'%1 %2 칸', args0:[{type:'field_dropdown', name:'DIR', options:[['앞으로 ↑','F'],['뒤로 ↓','B']]},{type:'input_value', name:'N', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{N:2}},
+  {cat:'move', level:1, robots:'all', json:{type:'rb_turn', message0:'%1 으로 %2 ° 돌기', args0:[{type:'field_dropdown', name:'DIR', options:[['왼쪽 ↶','L'],['오른쪽 ↷','R']]},{type:'input_value', name:'DEG', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{DEG:90}},
+  {cat:'move', level:1, robots:['middle'], json:{type:'rb_strafe', message0:'%1 으로 %2 칸 옆걸음', args0:[{type:'field_dropdown', name:'DIR', options:[['왼쪽 ←','L'],['오른쪽 →','R']]},{type:'input_value', name:'N', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{N:1}},
+  {cat:'move', level:1, robots:'all', json:{type:'rb_stop', message0:'멈추기', previousStatement:null, nextStatement:null, style:'move_blocks'}},
+  {cat:'move', level:2, robots:'all', json:{type:'rb_drive_time', message0:'%1 %% 속도로 %2 초 %3', args0:[{type:'input_value', name:'SPEED', check:'Number'},{type:'input_value', name:'SEC', check:'Number'},{type:'field_dropdown', name:'DIR', options:[['전진','F'],['후진','B']]}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{SPEED:70, SEC:1}},
+  {cat:'move', level:2, robots:'all', json:{type:'rb_wheels', message0:'왼쪽 바퀴 %1 %% 오른쪽 바퀴 %2 %%', args0:[{type:'input_value', name:'L', check:'Number'},{type:'input_value', name:'R', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks', tooltip:'바퀴 속도를 정하고 바로 다음 블록으로 넘어갑니다.'}, shadows:{L:50, R:80}},
+  {cat:'move', level:2, robots:['middle'], json:{type:'rb_diag', message0:'%1 대각선으로 %2 초', args0:[{type:'field_dropdown', name:'DIR', options:[['↗','FR'],['↖','FL'],['↘','BR'],['↙','BL']]},{type:'input_value', name:'SEC', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{SEC:1}},
+  {cat:'move', level:3, robots:['middle'], json:{type:'rb_vector', message0:'이동 앞 %1 %% 옆 %2 %% 회전 %3 %%', args0:[{type:'input_value', name:'Y', check:'Number'},{type:'input_value', name:'X', check:'Number'},{type:'input_value', name:'R', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{Y:50, X:0, R:0}},
+  // 로봇팔·흡착
+  {cat:'arm', level:1, robots:['middle'], json:{type:'rb_pose', message0:'팔을 %1 자세로', args0:[{type:'field_dropdown', name:'POSE', options:[['픽업','pick'],['이동','carry'],['1층','l1'],['2층','l2'],['3층','l3']]}], previousStatement:null, nextStatement:null, style:'arm_blocks'}},
+  {cat:'arm', level:1, robots:['middle'], json:{type:'rb_grab', message0:'흡착 %1', args0:[{type:'field_dropdown', name:'ACT', options:[['집기','grab'],['놓기','release']]}], previousStatement:null, nextStatement:null, style:'arm_blocks'}},
+  {cat:'arm', level:2, robots:['middle'], json:{type:'rb_layer', message0:'팔을 %1 층 높이로', args0:[{type:'input_value', name:'N', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'arm_blocks'}, shadows:{N:2}},
+  {cat:'arm', level:2, robots:['middle'], json:{type:'rb_base_turn', message0:'베이스를 %1 으로 %2 초 돌리기', args0:[{type:'field_dropdown', name:'DIR', options:[['왼쪽 ↶','L'],['오른쪽 ↷','R']]},{type:'input_value', name:'SEC', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'arm_blocks', tooltip:'360° 연속회전 서보라 각도 대신 시간으로 돌립니다.'}, shadows:{SEC:0.5}},
+  {cat:'arm', level:2, robots:['middle'], json:{type:'rb_joint', message0:'%1 를 %2 ° 로', args0:[{type:'field_dropdown', name:'JOINT', options:[['어깨 (20~120°)','sh'],['엘보 (70~180°)','el']]},{type:'input_value', name:'DEG', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'arm_blocks'}, shadows:{DEG:90}},
+  // 장치 (배선에 추가한 모터·센서)
+  {cat:'device', level:2, robots:'all', builtin:'rb_motor', shadows:{SPEED:70}},
+  {cat:'device', level:2, robots:'all', builtin:'rb_servo_dev', shadows:{DEG:90}},
+  {cat:'device', level:2, robots:'all', builtin:'rb_stepper', shadows:{STEPS:200, SPS:400}},
+  {cat:'device', level:2, robots:'all', builtin:'rb_output'},
+  {cat:'device', level:2, robots:'all', builtin:'rb_sensor_val'},
+  {cat:'device', level:2, robots:'all', builtin:'rb_enc_read'},
+  {cat:'device', level:3, robots:'all', builtin:'rb_enc_reset'},
+  // 센서 (로봇 역할)
+  {cat:'sensor', level:2, robots:['sumo'], json:{type:'rb_floor', message0:'바닥 %1 밝기', args0:[{type:'field_dropdown', name:'SIDE', options:[['왼쪽','L'],['오른쪽','R']]}], output:'Number', style:'sensor_blocks'}},
+  {cat:'sensor', level:2, robots:['sumo'], json:{type:'rb_edge', message0:'바닥 %1 이 가장자리인가?', args0:[{type:'field_dropdown', name:'SIDE', options:[['왼쪽','L'],['오른쪽','R']]}], output:'Boolean', style:'sensor_blocks'}},
+  {cat:'sensor', level:2, robots:['sumo'], json:{type:'rb_dist', message0:'앞 거리 (cm)', output:'Number', style:'sensor_blocks'}},
+  {cat:'sensor', level:2, robots:['sumo'], json:{type:'rb_see', message0:'상대가 보이나?', output:'Boolean', style:'sensor_blocks'}},
+  {cat:'sensor', level:2, robots:['soccer'], json:{type:'rb_ball_dir', message0:'공 방향 (°)', output:'Number', style:'sensor_blocks'}},
+  {cat:'sensor', level:2, robots:['soccer'], json:{type:'rb_ball_str', message0:'공 세기', output:'Number', style:'sensor_blocks'}},
+  {cat:'sensor', level:2, robots:'all', json:{type:'rb_timer', message0:'타이머 (초)', output:'Number', style:'sensor_blocks'}},
+  {cat:'sensor', level:2, robots:'all', json:{type:'rb_timer_reset', message0:'타이머 초기화', previousStatement:null, nextStatement:null, style:'sensor_blocks'}},
+  // Xbox 컨트롤러 (Bluepad32)
+  {cat:'pad', level:2, robots:['soccer','middle'], json:{type:'rb_pad_pressed', message0:'Xbox %1 눌렸나?', args0:[{type:'field_dropdown', name:'BTN', options:PAD_BTNS}], output:'Boolean', style:'pad_blocks'}},
+  {cat:'pad', level:2, robots:['soccer','middle'], json:{type:'rb_pad_axis', message0:'Xbox %1 값', args0:[{type:'field_dropdown', name:'AXIS', options:[['왼쪽 스틱 X','LX'],['왼쪽 스틱 Y','LY'],['오른쪽 스틱 X','RX'],['오른쪽 스틱 Y','RY'],['LT','LT'],['RT','RT']]}], output:'Number', style:'pad_blocks', tooltip:'스틱은 −100~100 (위·오른쪽이 +), 트리거는 0~100'}},
+  {cat:'pad', level:2, robots:['soccer','middle'], json:{type:'rb_pad_connected', message0:'Xbox 컨트롤러 연결됐나?', output:'Boolean', style:'pad_blocks'}},
+  {cat:'pad', level:2, robots:['soccer','middle'], json:{type:'rb_pad_rumble', message0:'Xbox 진동 %1 초', args0:[{type:'input_value', name:'SEC', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'pad_blocks'}, shadows:{SEC:0.3}},
+  {cat:'pad', level:3, robots:['soccer','middle'], json:{type:'rb_manual', message0:'기본 조종 %1', args0:[{type:'field_dropdown', name:'MODE', options:[['켜기','ON'],['끄기','OFF']]}], previousStatement:null, nextStatement:null, style:'pad_blocks', tooltip:'켜면 프로그램이 도는 동안에도 펌웨어 기본 조종(주행)이 살아 있습니다.'}},
+  // 핀 (ESP32 GPIO)
+  {cat:'pin', level:2, robots:'all', fields:{PIN:'13'}, json:{type:'rb_dwrite', message0:'디지털 핀 %1 을 %2', args0:[{type:'field_dropdown', name:'PIN', options:OUT_PIN_OPTS},{type:'field_dropdown', name:'VAL', options:[['켜기 (HIGH)','1'],['끄기 (LOW)','0']]}], previousStatement:null, nextStatement:null, style:'pin_blocks'}},
+  {cat:'pin', level:2, robots:'all', fields:{PIN:'0'}, json:{type:'rb_dread', message0:'디지털 핀 %1 값', args0:[{type:'field_dropdown', name:'PIN', options:IN_PIN_OPTS}], output:'Boolean', style:'pin_blocks'}},
+  {cat:'pin', level:2, robots:'all', fields:{PIN:'34'}, json:{type:'rb_aread', message0:'아날로그 핀 %1 값 (0~4095)', args0:[{type:'field_dropdown', name:'PIN', options:ADC_PIN_OPTS}], output:'Number', style:'pin_blocks', tooltip:'Bluepad32가 블루투스를 계속 쓰므로 ADC1 핀(32~39)만 읽을 수 있습니다.'}},
+  {cat:'pin', level:2, robots:'all', fields:{PIN:'14'}, json:{type:'rb_servo_pin', message0:'서보 핀 %1 을 %2 ° 로', args0:[{type:'field_dropdown', name:'PIN', options:OUT_PIN_OPTS},{type:'input_value', name:'DEG', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'pin_blocks'}, shadows:{DEG:90}},
+  {cat:'pin', level:3, robots:'all', fields:{PIN:'13'}, json:{type:'rb_pwm_pin', message0:'PWM 핀 %1 을 %2 %%', args0:[{type:'field_dropdown', name:'PIN', options:OUT_PIN_OPTS},{type:'input_value', name:'DUTY', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'pin_blocks'}, shadows:{DUTY:50}},
+  {cat:'pin', level:3, robots:'all', fields:{PIN:'5'}, json:{type:'rb_pin_mode', message0:'핀 %1 을 %2 으로', args0:[{type:'field_dropdown', name:'PIN', options:IN_PIN_OPTS},{type:'field_dropdown', name:'MODE', options:[['풀업 입력','INPUT_PULLUP'],['풀다운 입력','INPUT_PULLDOWN'],['입력','INPUT']]}], previousStatement:null, nextStatement:null, style:'pin_blocks'}},
+  // 소리·표시
+  {cat:'sound', level:1, robots:'all', json:{type:'rb_beep', message0:'삑 소리', previousStatement:null, nextStatement:null, style:'sound_blocks'}},
+  {cat:'sound', level:2, robots:'all', json:{type:'rb_show', message0:'화면에 %1 표시', args0:[{type:'input_value', name:'TEXT'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'sound_blocks'}, textShadow:{TEXT:'안녕'}},
+  // 제어
+  {cat:'control', level:1, robots:'all', json:{type:'rb_wait', message0:'%1 초 기다리기', args0:[{type:'input_value', name:'SEC', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'loop_blocks'}, shadows:{SEC:1}},
+  {cat:'control', level:1, robots:'all', builtin:'controls_repeat_ext', shadows:{TIMES:4}},
+  {cat:'control', level:1, robots:'all', json:{type:'rb_forever', message0:'계속 반복 %1 %2', args0:[{type:'input_dummy'},{type:'input_statement', name:'DO'}], previousStatement:null, style:'loop_blocks'}},
+  {cat:'control', level:2, robots:'all', builtin:'controls_if'},
+  {cat:'control', level:2, robots:'all', builtin:'controls_if', extra:{elseIfCount:0, hasElse:true}},
+  {cat:'control', level:2, robots:'all', builtin:'controls_whileUntil'},
+  {cat:'control', level:2, robots:'all', json:{type:'rb_wait_until', message0:'%1 까지 기다리기', args0:[{type:'input_value', name:'COND', check:'Boolean'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'loop_blocks'}},
+  {cat:'control', level:2, robots:'all', json:{type:'rb_end', message0:'프로그램 끝내기', previousStatement:null, style:'loop_blocks'}},
+  // 연산
+  {cat:'math', level:2, robots:'all', builtin:'math_number'},
+  {cat:'math', level:2, robots:'all', builtin:'math_arithmetic', shadows:{A:1, B:1}},
+  {cat:'math', level:2, robots:'all', builtin:'math_random_int', shadows:{FROM:1, TO:10}},
+  {cat:'math', level:2, robots:'all', builtin:'logic_compare'},
+  {cat:'math', level:2, robots:'all', builtin:'logic_operation'},
+  {cat:'math', level:2, robots:'all', builtin:'logic_negate'},
+  {cat:'math', level:2, robots:'all', builtin:'logic_boolean'},
+  {cat:'math', level:2, robots:'all', builtin:'text'}
+];
+Blockly.common.defineBlocksWithJsonArray(BLOCKS.filter(b => b.json).map(b => b.json));
+(function(){
+  const base = Blockly.Blocks['controls_if'].init;
+  Blockly.Blocks['controls_if'].init = function(){ base.call(this); this.setStyle('loop_blocks'); };
+})();
+// 장치 블록: 드롭다운이 지금 배선된 장치 목록을 그때그때 읽는다
+const dd = types => new Blockly.FieldDropdown(devOptions(types));
+const stmt = b => { b.setPreviousStatement(true); b.setNextStatement(true); b.setStyle('device_blocks'); b.setInputsInline(true); };
+Blockly.Blocks['rb_motor'] = { init(){ this.appendValueInput('SPEED').setCheck('Number').appendField('모터').appendField(dd(['drv8871','encmotor','pcacont']), 'DEV'); this.appendDummyInput().appendField('%'); stmt(this); this.setTooltip('배선한 DC 모터를 −100~100%로 돌립니다. 0이면 멈춥니다.'); } };
+Blockly.Blocks['rb_servo_dev'] = { init(){ this.appendValueInput('DEG').setCheck('Number').appendField('서보').appendField(dd(['servo','pcaservo']), 'DEV').appendField('를'); this.appendDummyInput().appendField('° 로'); stmt(this); } };
+Blockly.Blocks['rb_stepper'] = { init(){ this.appendValueInput('STEPS').setCheck('Number').appendField('스테핑').appendField(dd(['stepper']), 'DEV'); this.appendValueInput('SPS').setCheck('Number').appendField('스텝, 초당'); this.appendDummyInput().appendField('스텝'); stmt(this); this.setTooltip('스텝 수만큼 돌고 끝날 때까지 기다립니다. 음수면 반대 방향.'); } };
+Blockly.Blocks['rb_output'] = { init(){ this.appendDummyInput().appendField(dd(['mosfet','led','buzzer']), 'DEV').appendField(new Blockly.FieldDropdown([['켜기','ON'],['끄기','OFF']]), 'VAL'); stmt(this); } };
+Blockly.Blocks['rb_sensor_val'] = { init(){ this.appendDummyInput().appendField(dd(SENSOR_TYPES), 'DEV').appendField('값'); this.setOutput(true, 'Number'); this.setStyle('device_blocks'); this.setTooltip('거리 센서는 cm, 바닥·컬러 센서는 0~100, 버튼·근접 센서는 0 또는 1'); } };
+Blockly.Blocks['rb_enc_read'] = { init(){ this.appendDummyInput().appendField(dd(['encmotor']), 'DEV').appendField('엔코더').appendField(new Blockly.FieldDropdown([['카운트','COUNT'],['RPM','RPM']]), 'WHAT'); this.setOutput(true, 'Number'); this.setStyle('device_blocks'); } };
+Blockly.Blocks['rb_enc_reset'] = { init(){ this.appendDummyInput().appendField(dd(['encmotor']), 'DEV').appendField('엔코더 초기화'); stmt(this); } };
+
+const CATS = [
+  {id:'event', name:'이벤트', colour:'#D99A00'},
+  {id:'move', name:'움직임', colour:'#2F74D0'},
+  {id:'arm', name:'로봇팔', colour:'#7C55C7'},
+  {id:'device', name:'장치', colour:'#8A6D3B'},
+  {id:'pad', name:'Xbox 컨트롤러', colour:'#2C9CDB'},
+  {id:'sensor', name:'센서', colour:'#12949A'},
+  {id:'pin', name:'핀 (GPIO)', colour:'#5C6B7A'},
+  {id:'sound', name:'소리·표시', colour:'#C94C86'},
+  {id:'control', name:'제어', colour:'#D9722A'},
+  {id:'math', name:'연산', colour:'#3E9A4F'}
+];
+const numShadow = n => ({shadow:{type:'math_number', fields:{NUM:n}}});
+function toolboxItem(b){
+  const type = b.json ? b.json.type : b.builtin;
+  const item = {kind:'block', type};
+  const inputs = {};
+  if (b.shadows) for (const k in b.shadows) inputs[k] = numShadow(b.shadows[k]);
+  if (b.textShadow) for (const k in b.textShadow) inputs[k] = {shadow:{type:'text', fields:{TEXT:b.textShadow[k]}}};
+  if (Object.keys(inputs).length) item.inputs = inputs;
+  if (b.extra) item.extraState = b.extra;
+  if (b.fields) item.fields = b.fields;
+  return item;
+}
+function buildToolbox(robot, lv){
+  const contents = [];
+  for (const c of CATS){
+    const items = BLOCKS.filter(b => b.cat === c.id && b.level <= lv && (b.robots === 'all' || b.robots.includes(robot))).map(toolboxItem);
+    if (items.length) contents.push({kind:'category', name:c.name, colour:c.colour, contents:items});
+  }
+  if (lv >= 2){
+    contents.push({kind:'category', name:'변수', colour:'#B0574A', custom:'VARIABLE'});
+    contents.push({kind:'category', name:'내 블록', colour:'#5E6AD2', custom:'PROCEDURE'});
+  }
+  return {kind:'categoryToolbox', contents};
+}
+
+/* ───────────── 테마 ───────────── */
+function shade(hex, f){
+  const n = parseInt(hex.slice(1), 16); let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  r = Math.round(r*f); g = Math.round(g*f); b = Math.round(b*f);
+  const c = v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0');
+  return '#' + c(r) + c(g) + c(b);
+}
+function style(hex){ return {colourPrimary:hex, colourSecondary:shade(hex, 1.18), colourTertiary:shade(hex, 0.72)}; }
+const BLOCK_STYLES = {
+  event_blocks:{...style('#D99A00'), hat:'cap'}, move_blocks:style('#2F74D0'), arm_blocks:style('#7C55C7'),
+  sensor_blocks:style('#12949A'), sound_blocks:style('#C94C86'), loop_blocks:style('#D9722A'),
+  pad_blocks:style('#2C9CDB'), pin_blocks:style('#5C6B7A'), device_blocks:style('#8A6D3B'),
+  logic_blocks:style('#3E9A4F'), math_blocks:style('#3E9A4F'), text_blocks:style('#3E9A4F'),
+  variable_blocks:style('#B0574A'), variable_dynamic_blocks:style('#B0574A'), procedure_blocks:style('#5E6AD2'),
+  list_blocks:style('#6B7A8F'), colour_blocks:style('#6B7A8F')
+};
+const FONT = {family:FONT_FAMILY, weight:'600', size:12};
+const THEMES = {
+  light: Blockly.Theme.defineTheme('rbLight', {base:Blockly.Themes.Classic, blockStyles:BLOCK_STYLES, fontStyle:FONT, startHats:true,
+    componentStyles:{workspaceBackgroundColour:'#F7F9FB', toolboxBackgroundColour:'#FFFFFF', toolboxForegroundColour:'#18202B', flyoutBackgroundColour:'#EBEFF4', flyoutForegroundColour:'#3A4556', flyoutOpacity:1, scrollbarColour:'#C3CBD6', insertionMarkerColour:'#000000', insertionMarkerOpacity:0.25, cursorColour:'#F2A900'}}),
+  dark: Blockly.Theme.defineTheme('rbDark', {base:Blockly.Themes.Classic, blockStyles:BLOCK_STYLES, fontStyle:FONT, startHats:true,
+    componentStyles:{workspaceBackgroundColour:'#131920', toolboxBackgroundColour:'#161D26', toolboxForegroundColour:'#E5E9EF', flyoutBackgroundColour:'#1C2430', flyoutForegroundColour:'#C9D2DE', flyoutOpacity:1, scrollbarColour:'#3A4656', insertionMarkerColour:'#FFFFFF', insertionMarkerOpacity:0.3, cursorColour:'#F5B92E'}})
+};
+function isDark(){
+  const t = document.documentElement.getAttribute('data-theme');
+  if (t === 'dark') return true; if (t === 'light') return false;
+  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+
+/* ───────────── 예제 프로그램 ───────────── */
+const n = v => numShadow(v);
+function chain(list){
+  let next = null;
+  for (let i = list.length - 1; i >= 0; i--){ const b = Object.assign({}, list[i]); if (next) b.next = {block:next}; next = b; }
+  return next;
+}
+const EXAMPLES = {
+  soccer: {blocks:{languageVersion:0, blocks:[ Object.assign({x:24, y:24}, chain([
+    {type:'rb_start'},
+    {type:'controls_repeat_ext', inputs:{TIMES:n(4), DO:{block:chain([
+      {type:'rb_move_cells', fields:{DIR:'F'}, inputs:{N:n(2)}},
+      {type:'rb_turn', fields:{DIR:'R'}, inputs:{DEG:n(90)}}
+    ])}}},
+    {type:'rb_beep'}
+  ])) ]}},
+  middle: {blocks:{languageVersion:0, blocks:[ Object.assign({x:24, y:24}, chain([
+    {type:'rb_start'},
+    {type:'rb_pose', fields:{POSE:'pick'}},
+    {type:'rb_move_cells', fields:{DIR:'F'}, inputs:{N:n(1)}},
+    {type:'rb_grab', fields:{ACT:'grab'}},
+    {type:'rb_pose', fields:{POSE:'carry'}},
+    {type:'rb_strafe', fields:{DIR:'R'}, inputs:{N:n(4)}},
+    {type:'rb_move_cells', fields:{DIR:'F'}, inputs:{N:n(1)}},
+    {type:'rb_pose', fields:{POSE:'l1'}},
+    {type:'rb_grab', fields:{ACT:'release'}},
+    {type:'rb_pose', fields:{POSE:'carry'}},
+    {type:'rb_beep'}
+  ])), Object.assign({x:24, y:560}, chain([
+    {type:'rb_pad', fields:{PAD:'Y'}},
+    {type:'rb_layer', inputs:{N:n(2)}},
+    {type:'rb_grab', fields:{ACT:'release'}},
+    {type:'rb_pad_rumble', inputs:{SEC:n(0.3)}},
+    {type:'rb_pose', fields:{POSE:'carry'}}
+  ])) ]}},
+  sumo: {blocks:{languageVersion:0, blocks:[ Object.assign({x:24, y:24}, chain([
+    {type:'rb_start'},
+    {type:'rb_forever', inputs:{DO:{block:{type:'controls_if', extraState:{elseIfCount:1, hasElse:true}, inputs:{
+      IF0:{block:{type:'logic_operation', fields:{OP:'OR'}, inputs:{A:{block:{type:'rb_edge', fields:{SIDE:'L'}}}, B:{block:{type:'rb_edge', fields:{SIDE:'R'}}}}}},
+      DO0:{block:chain([
+        {type:'rb_drive_time', fields:{DIR:'B'}, inputs:{SPEED:n(70), SEC:n(0.4)}},
+        {type:'rb_turn', fields:{DIR:'R'}, inputs:{DEG:n(120)}}
+      ])},
+      IF1:{block:{type:'rb_see'}},
+      DO1:{block:{type:'rb_wheels', inputs:{L:n(90), R:n(90)}}},
+      ELSE:{block:{type:'rb_wheels', inputs:{L:n(35), R:n(-35)}}}
+    }}}}}
+  ])) ]}}
+};
+
+/* ───────────── 작업 공간 ───────────── */
+loadDevices();
+resetRuntime();
+const ws = Blockly.inject('blocklyDiv', {
+  toolbox: buildToolbox(robotKey, level), renderer:'zelos', theme: isDark() ? THEMES.dark : THEMES.light,
+  trashcan:false, zoom:{controls:false, wheel:true, startScale: window.innerWidth < 600 ? 0.65 : 0.78, maxScale:2, minScale:0.4, scaleSpeed:1.15},
+  move:{scrollbars:true, drag:true, wheel:false}, grid:{spacing:24, length:2, colour:'#8892A055', snap:false}
+});
+function loadWorkspace(key){
+  const saved = store.get('rb.ws4.' + key, null);
+  Blockly.Events.disable();
+  try{ ws.clear(); Blockly.serialization.workspaces.load(saved || EXAMPLES[key], ws); }
+  catch(e){ ws.clear(); Blockly.serialization.workspaces.load(EXAMPLES[key], ws); }
+  finally{ Blockly.Events.enable(); }
+}
+function saveWorkspace(){ try{ store.set('rb.ws4.' + robotKey, Blockly.serialization.workspaces.save(ws)); }catch(e){} }
+loadWorkspace(robotKey);
+
+/* ───────────── 구동 (바퀴 명령 → 모터 드라이버) ───────────── */
+function driveMotors(){ return devices.filter(d => d.pos && (d.type === 'drv8871' || d.type === 'encmotor')); }
+function setWheel(pos, pct){ const d = driveMotors().find(m => m.pos === pos); if (d){ const s = R(d); s.cmd = Math.round(Math.max(-100, Math.min(100, pct))); s.brake = false; } }
+function skid(l, r){ setWheel('FL', l); setWheel('BL', l); setWheel('FR', r); setWheel('BR', r); }
+function mec(y, x, r){
+  let fl = y + x + r, fr = y - x - r, bl = y - x + r, br = y + x - r;
+  const m = Math.max(100, Math.abs(fl), Math.abs(fr), Math.abs(bl), Math.abs(br));
+  const k = 100/m; setWheel('FL', fl*k); setWheel('FR', fr*k); setWheel('BL', bl*k); setWheel('BR', br*k);
+}
+function brakeAll(){ for (const d of driveMotors()){ const s = R(d); s.cmd = 0; s.brake = true; } }
+function coastAll(){ for (const d of driveMotors()){ const s = R(d); s.cmd = 0; s.brake = false; } }
+function stopDrive(){ brakeAll(); }   // 두 펌웨어 모두 방향키를 놓으면 능동 제동 (IN1=IN2=HIGH)
+
+/* ───────────── 장치·핀 검사 ───────────── */
+function pinBlockPwm(){
+  try{ const s = new Set(); for (const b of ws.getAllBlocks(false)) if (b.type === 'rb_servo_pin' || b.type === 'rb_pwm_pin') s.add(b.getFieldValue('PIN')); return s.size; }
+  catch(e){ return 0; }
+}
+function checkDevices(){
+  const issues = [], state = {}, uses = new Map();
+  let pwm = pinBlockPwm();
+  const mark = (k, s) => { if (state[k] !== 'bad') state[k] = s; };
+  for (const d of devices){
+    const T = DEVICE_TYPES[d.type];
+    if (T.pwmUse && T.roles.some(([r]) => d.pins[r] != null)) pwm += T.pwmUse;
+    for (const [role, kind] of T.roles){
+      const p = d.pins[role], key = d.id + '.' + role, tag = `${d.name} ${role}`;
+      if (p == null){ mark(key, 'warn'); issues.push(['warn', `${tag}: 아직 연결하지 않았습니다.`]); continue; }
+      if (!uses.has(p)) uses.set(p, []);
+      uses.get(p).push({d, role, kind});
+      const bad = m => { state[key] = 'bad'; issues.push(['err', `${tag} → GPIO ${p}: ${m}`]); };
+      const warn = m => { mark(key, 'warn'); issues.push(['warn', `${tag} → GPIO ${p}: ${m}`]); };
+      const isOut = kind === 'pwm' || kind === 'out' || kind === 'sda' || kind === 'scl';
+      if (FLASH.includes(p)) bad('내부 플래시에 연결된 핀이라 쓸 수 없습니다.');
+      if (isOut && INPUT_ONLY.includes(p)) bad('입력 전용 핀이라 출력이나 I²C에 쓸 수 없습니다.');
+      if (kind === 'adc' && !ADC1.includes(p)) bad(ADC2.includes(p) ? 'ADC2 핀은 Bluepad32가 블루투스를 쓰는 동안 읽을 수 없습니다. 32~39번을 고르세요.' : '아날로그 입력이 없는 핀입니다. 32~39번을 고르세요.');
+      if (p === 12 && isOut) bad('부팅 때 HIGH가 되면 플래시 전압 설정이 바뀌어 부팅이 실패할 수 있습니다.');
+      else if (STRAP.includes(p) && isOut) warn('부팅 스트래핑 핀입니다. 부팅 중 신호가 튈 수 있어 10 kΩ 풀다운을 권합니다.');
+      if (SERIAL.includes(p)) warn('USB 시리얼(업로드·로그) 핀과 겹칩니다.');
+      if (kind === 'in' && INPUT_ONLY.includes(p)) warn('내부 풀업이 없어 외부 풀업 저항이 필요합니다.');
+      if (d.type === 'hcsr04' && role === 'ECHO') warn('ECHO는 5 V 신호라 분압 저항(예: 1 kΩ + 2 kΩ)이 필요합니다.');
+    }
+  }
+  for (const [p, list] of uses){
+    if (list.length < 2) continue;
+    if (list.every(u => u.kind === 'sda') || list.every(u => u.kind === 'scl')) continue;
+    for (const u of list) state[u.d.id + '.' + u.role] = 'bad';
+    issues.push(['err', `GPIO ${p}에 ${list.map(u => u.d.name + ' ' + u.role).join(', ')}이(가) 함께 연결됐습니다.`]);
+  }
+  const buses = new Map();
+  for (const d of devices){
+    const T = DEVICE_TYPES[d.type];
+    if (!T.addr || d.pins.SDA == null || d.pins.SCL == null) continue;
+    const k = d.pins.SDA + '/' + d.pins.SCL;
+    if (!buses.has(k)) buses.set(k, []);
+    buses.get(k).push(d);
+  }
+  const pcas = devices.filter(d => d.type === 'pca9685'), chUse = new Map();
+  for (const d of devices){
+    if (!DEVICE_TYPES[d.type].pca) continue;
+    if (!pcas.length){ state[d.id + '.CH'] = 'bad'; issues.push(['err', `${d.name}: PCA9685가 없습니다. 장치 추가에서 PCA9685를 넣으세요.`]); continue; }
+    if (d.ch == null){ mark(d.id + '.CH', 'warn'); issues.push(['warn', `${d.name}: PCA9685 채널을 아직 고르지 않았습니다.`]); continue; }
+    if (!chUse.has(d.ch)) chUse.set(d.ch, []);
+    chUse.get(d.ch).push(d);
+  }
+  for (const [ch, ds] of chUse) if (ds.length > 1){ ds.forEach(d => { state[d.id + '.CH'] = 'bad'; }); issues.push(['err', `PCA9685 채널 ${ch}에 ${ds.map(d => d.name).join(', ')}이(가) 함께 연결됐습니다.`]); }
+  if (buses.size > 2) issues.push(['err', `I²C 버스가 ${buses.size}개입니다. ESP32는 2개까지 만들 수 있습니다.`]);
+  for (const [k, list] of buses){
+    const byAddr = new Map();
+    for (const d of list){ const a = DEVICE_TYPES[d.type].addr; if (!byAddr.has(a)) byAddr.set(a, []); byAddr.get(a).push(d); }
+    for (const [a, ds] of byAddr) if (ds.length > 1){
+      ds.forEach(d => { state[d.id + '.SDA'] = 'bad'; state[d.id + '.SCL'] = 'bad'; });
+      issues.push(['err', `I²C 버스(SDA ${k.split('/')[0]} · SCL ${k.split('/')[1]})에서 ${ds.map(d => d.name).join(', ')}의 주소 ${a}가 겹칩니다. 다른 버스에 달거나 주소를 바꿀 수 있는 모델을 쓰세요.`]);
+    }
+  }
+  return {issues, state, pwm, buses};
+}
+
+/* ───────────── 신호 계산 (장치 상태 → 각 선의 신호) ───────────── */
+function sensorValue(d){
+  const s = R(d); s.flash = performance.now() + 300;
+  if (d.type === 'button') return (d.id === 'boot' && performance.now() < bootDownUntil) || s.pressed ? 1 : 0;
+  return s.value;
+}
+function adcOf(d){ const T = DEVICE_TYPES[d.type].sensor, v = R(d).value;
+  if (d.type === 'sharp') return Math.round(Math.max(0, Math.min(4095, 27*4095/(v + 6)/3.3 * 0.8)));
+  return Math.round((v - T.min)/(T.max - T.min)*4095); }
+function sigOf(d, role){
+  const s = R(d), now = performance.now(), fl = now < s.flash;
+  switch (d.type){
+    case 'drv8871': case 'encmotor': {
+      if (role === 'ENCA' || role === 'ENCB'){
+        const hz = Math.round(Math.abs(s.rpm)/60*DEVICE_TYPES.encmotor.cpr/4);
+        return hz ? {mode:'pulse', active:true, text:`${hz} Hz`, speed:0.35} : {mode:'low', text:'대기'};
+      }
+      if (s.brake) return {mode:'high', active:true, text:'HIGH (제동)'};
+      const mine = role === 'IN1' ? s.cmd > 0 : s.cmd < 0;
+      return mine ? {mode:'pwm', active:true, text:`PWM ${Math.abs(s.cmd)}%`, speed: 2.1 - Math.abs(s.cmd)/100*1.7} : {mode:'low', text:'LOW'};
+    }
+    case 'stepper': {
+      const moving = Math.abs(s.goal - s.pos) >= 1;
+      if (role === 'STEP') return moving ? {mode:'pulse', active:true, text:`${s.sps} Hz`, speed:0.3} : {mode:'low', text:'LOW'};
+      if (role === 'DIR') return s.goal >= s.pos ? {mode:'high', active:moving, text:'HIGH'} : {mode:'low', active:moving, text:'LOW'};
+      return s.en ? {mode:'low', active:true, text:'LOW (켜짐)'} : {mode:'high', text:'HIGH (꺼짐)'};
+    }
+    case 'servo': return s.us != null ? {mode:'pwm', active:true, text:`${Math.round(s.us)} µs`, speed:1.6} : {mode:'low', text:'신호 없음'};
+    case 'mosfet': case 'led': return s.on ? {mode:'high', active:true, text:'HIGH'} : {mode:'low', text:'LOW'};
+    case 'buzzer': return now < s.until ? {mode:'pwm', active:true, text:'2.7 kHz', speed:0.3} : {mode:'low', text:'LOW'};
+    case 'button': { const p = (d.id === 'boot' && now < bootDownUntil) || s.pressed; return p ? {mode:'low', active:true, text:'LOW (눌림)'} : {mode:'high', text:'HIGH'}; }
+    case 'e18': return s.value ? {mode:'low', active:true, text:'LOW (감지)'} : {mode:'high', text:'HIGH'};
+    case 'irfloor': case 'sharp': return {mode:'adc', active:fl, text:`ADC ${adcOf(d)}`};
+    case 'hcsr04': return role === 'TRIG' ? (fl ? {mode:'pulse', active:true, text:'10 µs', speed:0.3} : {mode:'low', text:'LOW'})
+                                          : (fl ? {mode:'pulse', active:true, text:`${Math.round(s.value*58)} µs`, speed:0.3} : {mode:'low', text:'LOW'});
+    default: // I²C 장치
+      return fl ? {mode:'pulse', active:true, text: role === 'SDA' ? `0x${DEVICE_TYPES[d.type].addr.slice(2)} 읽기` : 'CLK 400k', speed:0.4} : {mode:'high', text:'유휴'};
+  }
+}
+function cardValue(d){
+  const s = R(d), T = DEVICE_TYPES[d.type];
+  switch (d.type){
+    case 'drv8871': return s.brake ? '제동' : (s.cmd ? `${s.cmd > 0 ? '+' : ''}${s.cmd}%` : '정지');
+    case 'encmotor': return (s.brake ? '제동' : (s.cmd ? `${s.cmd > 0 ? '+' : ''}${s.cmd}%` : '정지')) + ` · ${Math.round(s.rpm)} rpm`;
+    case 'stepper': return `${Math.round(s.pos)} 스텝`;
+    case 'servo': return s.us != null ? `${Math.round(s.us)} µs` : '—';
+    case 'pcaservo': return `${Math.round(s.deg)}° · ${servoUs(d)} µs`;
+    case 'pcacont': return s.spd ? `${s.spd > 0 ? '+' : ''}${Math.round(s.spd)}% · ${servoUs(d)} µs` : `정지 · ${servoUs(d)} µs`;
+    case 'pca9685': return 'I²C ' + T.addr;
+    case 'mosfet': case 'led': return s.on ? '켜짐' : '꺼짐';
+    case 'buzzer': return performance.now() < s.until ? '삑' : '—';
+    case 'button': return sigOf(d, 'SIG').active ? '눌림' : '—';
+    case 'e18': return s.value ? '감지' : '—';
+    case 'oled': return 'I²C ' + T.addr;
+    default: return `${Math.round(s.value)}${T.sensor && T.sensor.unit ? ' ' + T.sensor.unit : ''}`;
+  }
+}
+function numValue(d){
+  const s = R(d);
+  switch (d.type){
+    case 'drv8871': return s.cmd;
+    case 'encmotor': return s.rpm;
+    case 'stepper': return s.pos;
+    case 'servo': return s.us == null ? 0 : s.us;
+    case 'pcaservo': return s.deg;
+    case 'pcacont': return s.spd || 0;
+    case 'pca9685': return performance.now() < s.flash ? 1 : 0;
+    case 'mosfet': case 'led': return s.on ? 1 : 0;
+    case 'buzzer': return performance.now() < s.until ? 1 : 0;
+    case 'button': return sigOf(d, 'SIG').active ? 1 : 0;
+    case 'oled': return performance.now() < s.flash ? 1 : 0;
+    default: return s.value;
+  }
+}
+
+/* ───────────── 배선도 그리기 ───────────── */
+const BOARD_L = ['3V3','EN','36','39','34','35','32','33','25','26','27','14','12','GND','13','9','10','11','5V'];
+const BOARD_R = ['GND','23','22','1','3','21','GND','19','18','5','17','16','4','0','2','15','8','7','6'];
+const PIN_ALIAS = {36:'VP', 39:'VN', 1:'TX0', 3:'RX0', 9:'SD2', 10:'SD3', 11:'CMD', 8:'SD1', 7:'SD0', 6:'CLK', 0:'BOOT', 34:'입력', 35:'입력'};
+const KIND_COL = {pwm:'#E07A1F', out:'#2E9E5B', in:'#12949A', adc:'#8E5CC7', sda:'#2F74D0', scl:'#5AA9E6'};
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'})[c]);
+const clip = (s, k) => s.length > k ? s.slice(0, k - 1) + '…' : s;
+const sid = s => String(s).replace(/[^A-Za-z0-9_-]/g, '_');
+
+// 드라이버 모듈과 부하(모터·서보·펌프)를 나눠 그린다: ESP32 → 드라이버 → 부하
+const OUT_COL = '#C0392B';
+function drvInfo(d){
+  switch (d.type){
+    case 'drv8871': return {title:'DRV8871', sub:'모터 드라이버', outs:['OUT1','OUT2'], load:{kind:'motor', sub:'DC 기어모터'}};
+    case 'encmotor': return {title:'DRV8871', sub:'모터 드라이버 + 엔코더', outs:['OUT1','OUT2'], load:{kind:'motor', sub:'엔코더 DC 모터'}};
+    case 'stepper': return {title:'A4988', sub:'스테핑 드라이버', outs:['1A','1B','2A','2B'], load:{kind:'motor', sub:'스테핑 모터'}};
+    case 'mosfet': return {title:'XY-MOS', sub:'MOSFET 스위치 모듈', outs:['OUT+','OUT−'], load:{kind:'load', sub: d.tag === 'valve' ? '12 V 솔레노이드 · 다이오드' : d.tag === 'pump' ? '12 V 진공펌프 · 다이오드' : '부하 · 플라이백 다이오드'}};
+    case 'pca9685': return {title:'PCA9685', sub:'서보 드라이버 · 16채널', kids:true};
+    default: return null;
+  }
+}
+function loadValue(d){
+  const s = R(d);
+  switch (d.type){
+    case 'drv8871': case 'encmotor': { const t = s.brake ? '제동' : s.cmd > 0 ? `정회전 ${s.cmd}%` : s.cmd < 0 ? `역회전 ${-s.cmd}%` : '정지'; return d.type === 'encmotor' ? t + ` · ${Math.round(s.rpm)}rpm` : t; }
+    case 'stepper': return `${Math.round(s.pos)} 스텝`;
+    case 'mosfet': return s.on ? '켜짐' : '꺼짐';
+    case 'pcaservo': return `${Math.round(s.deg)}°`;
+    case 'pcacont': return s.spd ? `${s.spd > 0 ? '+' : ''}${Math.round(s.spd)}%` : '정지';
+    default: return '';
+  }
+}
+function renderWiring(){
+  const host = $('#wiringSvg');
+  const {state} = checkDevices();
+  const LOADW = 132, GAP = 46, CW = 192, LANE = 100, BW = 180;
+  const LDX = 10, LCX = LDX + LOADW + GAP, BX = LCX + CW + LANE, RCX = BX + BW + LANE, RDX = RCX + CW + GAP, W = RDX + LOADW + 10;
+  const PY0 = 132, PDY = 24, RH = 22, LH = 56;
+  const pinPos = {};
+  BOARD_L.forEach((nm, i) => { if (/^\d+$/.test(nm)) pinPos[nm] = {x:BX, y:PY0 + i*PDY, side:'L'}; });
+  BOARD_R.forEach((nm, i) => { if (/^\d+$/.test(nm)) pinPos[nm] = {x:BX + BW, y:PY0 + i*PDY, side:'R'}; });
+  const boardBottom = PY0 + 18*PDY + 46;
+  const pcaKids = devices.filter(d => DEVICE_TYPES[d.type].pca).sort((a, b) => (a.ch ?? 99) - (b.ch ?? 99));
+  const cards = devices.filter(d => !DEVICE_TYPES[d.type].pca).map(d => {
+    const roles = DEVICE_TYPES[d.type].roles, ys = [], sides = [], info = drvInfo(d);
+    for (const [r] of roles){ const p = d.pins[r]; if (p != null && pinPos[p]){ ys.push(pinPos[p].y); sides.push(pinPos[p].side); } }
+    const nl = sides.filter(x => x === 'L').length;
+    let h = 60 + roles.length*RH;
+    if (info && info.kids) h = Math.max(h + pcaKids.length*20 + 4, pcaKids.length*(LH + 8) - 8);
+    if (info && info.load) h = Math.max(h, LH + 8);
+    return {d, roles, info, side: sides.length ? (nl >= sides.length - nl ? 'L' : 'R') : null,
+            ay: ys.length ? ys.reduce((a, b) => a + b, 0)/ys.length : null, h};
+  });
+  for (const c of cards) if (!c.side){
+    const nl = cards.filter(x => x.side === 'L').length, nr = cards.filter(x => x.side === 'R').length;
+    c.side = nl <= nr ? 'L' : 'R';
+  }
+  let H = boardBottom + 20;
+  for (const side of ['L','R']){
+    const col = cards.filter(c => c.side === side).sort((a, b) => (a.ay == null ? 1e9 : a.ay) - (b.ay == null ? 1e9 : b.ay));
+    let y = 12;
+    for (const c of col){ c.y = Math.max(y, c.ay == null ? y : c.ay - c.h/2); y = c.y + c.h + 12; c.x = side === 'L' ? LCX : RCX; }
+    H = Math.max(H, y + 12);
+  }
+  const wires = [];
+  for (const c of cards) c.roles.forEach(([r, kind], i) => {
+    const p = c.d.pins[r], ty = c.y + 52 + i*RH;
+    if (p == null || !pinPos[p]) return;
+    wires.push({c, r, kind, p, from:pinPos[p], ty, tx: c.side === 'L' ? c.x + CW : c.x, bad: state[c.d.id + '.' + r] === 'bad'});
+  });
+  const cross = wires.filter(w => w.from.side !== w.c.side);
+  cross.forEach((w, k) => { w.yb = boardBottom + 12 + k*6; });
+  let below = boardBottom + 12 + cross.length*6;
+  for (const side of ['L','R']){
+    const near = wires.filter(w => w.from.side === side && w.c.side === side).sort((a, b) => (a.from.y - b.from.y) || (a.ty - b.ty));
+    const out = wires.filter(w => w.from.side === side && w.c.side !== side);
+    const into = wires.filter(w => w.c.side === side && w.from.side !== side);
+    const total = near.length + out.length + into.length;
+    const step = Math.min(7, (LANE - 20)/Math.max(1, total));
+    const at = i => side === 'L' ? BX - 10 - i*step : BX + BW + 10 + i*step;
+    near.forEach((w, i) => { w.lane = at(i); });
+    out.forEach((w, i) => { w.laneA = at(near.length + i); });
+    into.forEach((w, i) => { w.laneB = at(near.length + out.length + i); });
+  }
+  // 전원 상자 (보드 아래)
+  const Rb = ROBOTS[robotKey], cnt = t => devices.filter(d => t.includes(d.type)).length;
+  const nDrv = cnt(['drv8871','encmotor']), nMos = cnt(['mosfet']), nStep = cnt(['stepper']), hasPca = cnt(['pca9685']) > 0;
+  const pw = [];
+  pw.push(`${Rb.battery || '배터리'} → ` + [nDrv ? `DRV8871 VM ×${nDrv}` : '', nMos ? `MOSFET 모듈 ×${nMos}` : '', nStep ? `A4988 VMOT ×${nStep}` : '', 'ESP32 확장보드 DC 잭'].filter(Boolean).join(' · '));
+  if (hasPca) pw.push(`${Rb.servoPower || '서보 전원 5~6 V'} → PCA9685 V+ (서보 ${pcaKids.length}개, 1000 µF 콘덴서)`);
+  pw.push('확장보드 5 V · 3.3 V → ESP32 · 센서 · OLED' + (hasPca ? ' · PCA9685 로직' : ''));
+  pw.push('GND는 배터리 −, 드라이버, 확장보드를 한 점에서 공통으로');
+  H = Math.max(H, below + 16);
+  const PWX = LCX, PWW = RCX + CW - LCX, PWY = H, PWH = 30 + pw.length*18;
+  H = PWY + PWH + 12;
+  const used = {};
+  for (const w of wires) if (!used[w.p]) used[w.p] = w.kind;
+  const dim = id => focusDev && focusDev !== id ? ' opacity="0.16"' : '';
+  let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ESP32 배선도와 신호" font-family="${FONT_FAMILY.replace(/'/g, '')}">`;
+  // ESP32 보드
+  s += `<rect x="${BX}" y="40" width="${BW}" height="${boardBottom - 40}" rx="10" fill="#1F2A36" stroke="#0E141B"/>`;
+  s += `<rect x="${BX + 34}" y="48" width="${BW - 68}" height="48" rx="4" fill="#C9CED6" stroke="#8E98A6"/>`;
+  s += `<path d="M${BX + BW/2 - 38} 57h12v10h12v-10h12v10h12v-10h12v10h12" fill="none" stroke="#6B7685" stroke-width="2"/>`;
+  s += `<text x="${BX + BW/2}" y="88" text-anchor="middle" font-size="11" font-weight="700" fill="#2A3340">ESP32-WROOM-32</text>`;
+  s += `<text x="${BX + BW/2}" y="115" text-anchor="middle" font-size="12" font-weight="700" fill="#E5E9EF">NodeMCU-32S <tspan font-size="10" font-weight="400" fill="#9AA6B6">· 38핀</tspan></text>`;
+  s += `<rect x="${BX + BW/2 - 20}" y="${boardBottom - 18}" width="40" height="22" rx="3" fill="#B9C0CA" stroke="#7E8896"/><text x="${BX + BW/2}" y="${boardBottom - 3}" text-anchor="middle" font-size="10" fill="#2A3340">USB</text>`;
+  const pinDot = (nm, x, y, side) => {
+    const num = /^\d+$/.test(nm) ? Number(nm) : null;
+    let fill = '#3A4656', stroke = '#9AA6B6', label = nm, sub = '';
+    if (num != null){
+      label = 'GPIO' + num; sub = PIN_ALIAS[num] || '';
+      if (FLASH.includes(num)){ fill = '#55606E'; stroke = '#55606E'; }
+      else if (used[num]){ fill = KIND_COL[used[num]]; stroke = fill; }
+      else if (INPUT_ONLY.includes(num)) fill = 'none';
+    } else if (nm === '3V3' || nm === '5V'){ fill = '#D64545'; stroke = fill; }
+    else if (nm === 'GND'){ fill = '#0B0F14'; }
+    const flashTxt = num != null && FLASH.includes(num);
+    const tx = side === 'L' ? x + 9 : x - 9, anchor = side === 'L' ? 'start' : 'end';
+    let t = `<circle class="pd" ${num != null ? `id="pd-${num}"` : ''} cx="${x}" cy="${y}" r="4.6" fill="${fill}" stroke="${stroke}" stroke-width="1.4"/>`;
+    t += `<text x="${tx}" y="${y + 4}" text-anchor="${anchor}" font-size="11" font-weight="600" fill="${flashTxt ? '#6E7A89' : '#E5E9EF'}"${flashTxt ? ' text-decoration="line-through"' : ''}>${label}</text>`;
+    if (sub) t += `<text x="${side === 'L' ? x + 58 : x - 58}" y="${y + 4}" text-anchor="${anchor}" font-size="9.5" fill="#9AA6B6">${sub}</text>`;
+    return t;
+  };
+  BOARD_L.forEach((nm, i) => { s += pinDot(nm, BX, PY0 + i*PDY, 'L'); });
+  BOARD_R.forEach((nm, i) => { s += pinDot(nm, BX + BW, PY0 + i*PDY, 'R'); });
+  // ESP32 → 모듈 신호선
+  for (const w of wires){
+    const col = w.bad ? '#D64545' : KIND_COL[w.kind];
+    const dpath = w.yb != null ? `M${w.from.x} ${w.from.y}H${w.laneA}V${w.yb}H${w.laneB}V${w.ty}H${w.tx}` : `M${w.from.x} ${w.from.y}H${w.lane}V${w.ty}H${w.tx}`;
+    s += `<g${dim(w.c.d.id)}><path class="wb" d="${dpath}" stroke="${col}"${w.bad ? ' stroke-dasharray="5 4"' : ''}/>`;
+    s += `<path class="wa" id="wa-${sid(w.c.d.id)}-${w.r}" d="${dpath}" stroke="${col}"/></g>`;
+  }
+  // 부하 그리기 도우미
+  const loadBox = (d, x, y, kind, sub, focus) => {
+    const id = sid(d.id), cx = x + 22, cy = y + LH/2;
+    let t = `<g data-dev="${esc(d.id)}" style="cursor:pointer"${dim(d.id)}>`;
+    t += `<rect x="${x}" y="${y}" width="${LOADW}" height="${LH}" rx="9" fill="var(--panel)" stroke="${focus ? 'var(--accent)' : 'var(--line)'}" stroke-width="${focus ? 2 : 1.2}" stroke-dasharray="${kind === 'servo' || kind === 'cont' ? '0' : '0'}"/>`;
+    if (kind === 'motor' || kind === 'cont'){
+      t += `<circle cx="${cx}" cy="${cy}" r="15" fill="var(--chip)" stroke="var(--muted)" stroke-width="1.4"/>`;
+      t += `<g class="rot" id="mr-${id}"><path d="M${cx - 10} ${cy}a10 10 0 1 1 10 10" fill="none" stroke="${OUT_COL}" stroke-width="2"/><path d="M${cx - 4} ${cy + 10}l5 0l-3 -4.5z" fill="${OUT_COL}"/></g>`;
+      t += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink)">${kind === 'cont' ? 'S' : 'M'}</text>`;
+    } else if (kind === 'servo'){
+      t += `<rect x="${cx - 13}" y="${cy - 9}" width="26" height="18" rx="3" fill="var(--chip)" stroke="var(--muted)" stroke-width="1.4"/>`;
+      t += `<line id="sn-${id}" x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy - 15}" stroke="${KIND_COL.pwm}" stroke-width="3" stroke-linecap="round"/><circle cx="${cx}" cy="${cy}" r="3" fill="var(--ink)"/>`;
+    } else {
+      t += `<rect id="li-${id}" x="${cx - 14}" y="${cy - 12}" width="28" height="24" rx="5" fill="var(--chip)" stroke="var(--muted)" stroke-width="1.4"/>`;
+      t += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink)">${d.tag === 'valve' ? 'V' : d.tag === 'pump' ? 'P' : 'L'}</text>`;
+    }
+    t += `<text x="${x + 42}" y="${y + 17}" font-size="11" font-weight="700" fill="var(--ink)">${esc(clip(d.name, 8))}</text>`;
+    t += `<text x="${x + 42}" y="${y + 31}" font-size="9" fill="var(--muted)">${esc(clip(sub, 12))}</text>`;
+    t += `<text id="lv-${id}" x="${x + 42}" y="${y + 47}" font-size="10.5" font-weight="700" fill="var(--ink)"></text></g>`;
+    return t;
+  };
+  for (const c of cards){
+    const T = DEVICE_TYPES[c.d.type], focus = focusDev === c.d.id, id = sid(c.d.id), info = c.info;
+    const edgeX = c.side === 'L' ? c.x + CW : c.x, outX = c.side === 'L' ? c.x : c.x + CW;
+    const loadX = c.side === 'L' ? LDX : RDX, loadEdge = c.side === 'L' ? LDX + LOADW : RDX;
+    // 드라이버 → 부하 출력선
+    if (info && info.load){
+      const ly = c.y + c.h/2 - LH/2, mid = c.y + c.h/2, n = info.outs.length, sp = n > 2 ? 11 : 14;
+      info.outs.forEach((o, i) => {
+        const y = mid + (i - (n - 1)/2)*sp, dpath = `M${outX} ${y}H${loadEdge}`;
+        s += `<g${dim(c.d.id)}><path class="wb" d="${dpath}" stroke="${OUT_COL}"/><path class="wa" id="wo-${id}-${i}" d="${dpath}" stroke="${OUT_COL}"/>`;
+        s += `<text x="${c.side === 'L' ? outX - 4 : outX + 4}" y="${y - 3}" text-anchor="${c.side === 'L' ? 'end' : 'start'}" font-size="8.5" font-weight="600" fill="${OUT_COL}">${o}</text></g>`;
+      });
+      s += loadBox(c.d, loadX, ly, info.load.kind, info.load.sub, focus);
+    }
+    if (info && info.kids){
+      pcaKids.forEach((k, j) => {
+        const ry = c.y + 52 + c.roles.length*RH + j*20, ly = c.y + j*(LH + 8), my = ly + LH/2, kid = sid(k.id);
+        const gx = c.side === 'L' ? outX - GAP/2 - (j % 3)*4 : outX + GAP/2 + (j % 3)*4;
+        const dpath = `M${outX} ${ry}H${gx}V${my}H${loadEdge}`;
+        s += `<g${dim(k.id)}><path class="wb" d="${dpath}" stroke="${KIND_COL.pwm}"/><path class="wa" id="wa-${kid}-CH" d="${dpath}" stroke="${KIND_COL.pwm}"/></g>`;
+        s += loadBox(k, loadX, ly, DEVICE_TYPES[k.type].cont ? 'cont' : 'servo', DEVICE_TYPES[k.type].cont ? '360° 서보' : `서보 ${k.min ?? 0}~${k.max ?? 180}°`, focusDev === k.id);
+      });
+    }
+    // 모듈 카드
+    s += `<g data-dev="${esc(c.d.id)}" style="cursor:pointer"${dim(c.d.id)}>`;
+    s += `<rect x="${c.x}" y="${c.y}" width="${CW}" height="${c.h}" rx="9" fill="var(--panel)" stroke="${focus ? 'var(--accent)' : 'var(--line)'}" stroke-width="${focus ? 2 : 1.2}"/>`;
+    if (info){
+      s += `<rect x="${c.x}" y="${c.y}" width="${CW}" height="40" rx="9" fill="${c.d.type === 'pca9685' ? '#1E5AA8' : c.d.type === 'mosfet' ? '#2D6A3E' : '#9B2C22'}"/><rect x="${c.x}" y="${c.y + 30}" width="${CW}" height="10" fill="${c.d.type === 'pca9685' ? '#1E5AA8' : c.d.type === 'mosfet' ? '#2D6A3E' : '#9B2C22'}"/>`;
+      s += `<text x="${c.x + 10}" y="${c.y + 17}" font-size="13" font-weight="700" fill="#FFFFFF">${esc(info.title)}</text>`;
+      s += `<text id="wv-${id}" x="${c.x + CW - 10}" y="${c.y + 17}" text-anchor="end" font-size="11" font-weight="700" fill="#FFFFFF"></text>`;
+      s += `<text x="${c.x + 10}" y="${c.y + 33}" font-size="10" fill="#F1E6E3">${esc(clip(info.kids ? info.sub : c.d.name + ' · ' + info.sub, 30))}</text>`;
+    } else {
+      s += `<text x="${c.x + 10}" y="${c.y + 18}" font-size="13" font-weight="700" fill="var(--ink)">${esc(clip(c.d.name, 12))}</text>`;
+      s += `<text id="wv-${id}" x="${c.x + CW - 10}" y="${c.y + 18}" text-anchor="end" font-size="11" font-weight="700" fill="var(--ink)"></text>`;
+      s += `<text x="${c.x + 10}" y="${c.y + 33}" font-size="10" fill="var(--muted)">${esc(clip(T.short, 28))}</text>`;
+    }
+    c.roles.forEach(([r, kind], i) => {
+      const y = c.y + 52 + i*RH, p = c.d.pins[r], bad = state[c.d.id + '.' + r] === 'bad', col = KIND_COL[kind];
+      const pinTxt = p == null ? '미정' : 'GPIO' + p, pinFill = bad ? '#D64545' : 'var(--muted)';
+      if (c.side === 'L'){
+        s += `<text id="wt-${id}-${r}" x="${c.x + 10}" y="${y + 4}" font-size="10.5" font-weight="600" fill="var(--muted)"></text>`;
+        s += `<text x="${edgeX - 46}" y="${y + 4}" text-anchor="end" font-size="10" fill="${pinFill}">${pinTxt}</text>`;
+        s += `<text x="${edgeX - 9}" y="${y + 4}" text-anchor="end" font-size="10.5" font-weight="700" fill="${col}">${r}</text>`;
+      } else {
+        s += `<text x="${edgeX + 9}" y="${y + 4}" font-size="10.5" font-weight="700" fill="${col}">${r}</text>`;
+        s += `<text x="${edgeX + 46}" y="${y + 4}" font-size="10" fill="${pinFill}">${pinTxt}</text>`;
+        s += `<text id="wt-${id}-${r}" x="${c.x + CW - 10}" y="${y + 4}" text-anchor="end" font-size="10.5" font-weight="600" fill="var(--muted)"></text>`;
+      }
+      s += `<circle cx="${edgeX}" cy="${y}" r="3.8" fill="${p == null ? 'var(--panel)' : col}" stroke="${col}" stroke-width="1.4"/>`;
+    });
+    if (info && info.kids) pcaKids.forEach((k, j) => {
+      const y = c.y + 52 + c.roles.length*RH + j*20, kid = sid(k.id), bad = state[k.id + '.CH'] === 'bad';
+      const lx = c.side === 'L' ? c.x + 10 : c.x + CW - 10, anchor = c.side === 'L' ? 'start' : 'end';
+      s += `<text x="${lx}" y="${y + 4}" text-anchor="${anchor}" font-size="10.5" font-weight="700" fill="${bad ? '#D64545' : KIND_COL.pwm}">CH${k.ch ?? '?'} <tspan font-weight="400" fill="var(--ink)">${esc(clip(k.name, 8))}</tspan></text>`;
+      s += `<text id="wch-${kid}" x="${c.side === 'L' ? c.x + CW - 10 : c.x + 10}" y="${y + 4}" text-anchor="${c.side === 'L' ? 'end' : 'start'}" font-size="10" font-weight="600" fill="${KIND_COL.pwm}"></text>`;
+      s += `<circle cx="${outX}" cy="${y}" r="3.4" fill="${KIND_COL.pwm}"/>`;
+    });
+    if (info && info.load) info.outs.forEach((o, i) => { const n = info.outs.length, y = c.y + c.h/2 + (i - (n - 1)/2)*(n > 2 ? 11 : 14); s += `<circle cx="${outX}" cy="${y}" r="3" fill="${OUT_COL}"/>`; });
+    s += `<text x="${c.x + 10}" y="${c.y + c.h - 8}" font-size="9.5" fill="var(--muted)">${esc(clip(T.power, 34))}</text></g>`;
+  }
+  // 전원 상자
+  s += `<rect x="${PWX}" y="${PWY}" width="${PWW}" height="${PWH}" rx="9" fill="var(--panel)" stroke="#D64545" stroke-width="1.2" stroke-dasharray="6 4"/>`;
+  s += `<text x="${PWX + 12}" y="${PWY + 20}" font-size="12" font-weight="700" fill="#D64545">전원 배선</text>`;
+  pw.forEach((line, i) => { s += `<text x="${PWX + 12}" y="${PWY + 40 + i*18}" font-size="10.5" fill="var(--ink)">${esc(line)}</text>`; });
+  s += `</svg>`;
+  const keep = host.scrollLeft;
+  host.innerHTML = s;
+  if (host.dataset.centered !== robotKey){ host.dataset.centered = robotKey; host.scrollLeft = Math.max(0, (host.scrollWidth - host.clientWidth)/2); }
+  else host.scrollLeft = keep;
+  host.querySelectorAll('[data-dev]').forEach(g => g.addEventListener('click', () => {
+    focusDev = focusDev === g.dataset.dev ? null : g.dataset.dev;
+    renderWiring(); markFocusRow();
+  }));
+  updateSignals(true);
+}
+function setWa(el, active, flow, dur, rev){
+  if (!el) return;
+  const cls = 'wa' + (active ? ' on' : '') + (active && flow ? ' flow' : '');
+  if (el.getAttribute('class') !== cls) el.setAttribute('class', cls);
+  if (dur) el.style.animationDuration = dur.toFixed(2) + 's';
+  el.style.animationDirection = rev ? 'reverse' : 'normal';
+}
+function updateSignals(){
+  const litPins = new Set();
+  for (const d of devices){
+    const id = sid(d.id), v = $('#wv-' + id), s = R(d);
+    if (v) v.textContent = cardValue(d);
+    for (const [r, kind] of DEVICE_TYPES[d.type].roles){
+      const g = sigOf(d, r), wt = document.getElementById(`wt-${id}-${r}`);
+      if (wt){ wt.textContent = g.text; wt.setAttribute('fill', g.active ? KIND_COL[kind] : 'var(--muted)'); }
+      setWa(document.getElementById(`wa-${id}-${r}`), g.active, g.mode === 'pwm' || g.mode === 'pulse', g.speed);
+      if (g.active && d.pins[r] != null) litPins.add(d.pins[r]);
+    }
+    // 드라이버 출력 → 부하
+    const lv = document.getElementById('lv-' + id); if (lv) lv.textContent = loadValue(d);
+    const mr = document.getElementById('mr-' + id);
+    if (d.type === 'drv8871' || d.type === 'encmotor'){
+      const run_ = !s.brake && s.cmd !== 0, dur = 2.1 - Math.abs(s.cmd)/100*1.7;
+      for (let i = 0; i < 2; i++) setWa(document.getElementById(`wo-${id}-${i}`), run_ || s.brake, run_, dur, s.cmd < 0);
+      if (mr){ mr.setAttribute('class', 'rot' + (run_ ? ' spin' : '')); mr.style.animationDuration = (0.25 + (100 - Math.abs(s.cmd))/100*1.2).toFixed(2) + 's'; mr.style.animationDirection = s.cmd < 0 ? 'reverse' : 'normal'; }
+    } else if (d.type === 'stepper'){
+      const moving = Math.abs(s.goal - s.pos) >= 1;
+      for (let i = 0; i < 4; i++) setWa(document.getElementById(`wo-${id}-${i}`), moving || s.en, moving, 0.4, s.goal < s.pos);
+      if (mr){ mr.setAttribute('class', 'rot' + (moving ? ' spin' : '')); mr.style.animationDuration = '1s'; mr.style.animationDirection = s.goal < s.pos ? 'reverse' : 'normal'; }
+    } else if (d.type === 'mosfet'){
+      for (let i = 0; i < 2; i++) setWa(document.getElementById(`wo-${id}-${i}`), s.on, false);
+      const li = document.getElementById('li-' + id); if (li) li.setAttribute('fill', s.on ? 'var(--accent)' : 'var(--chip)');
+    } else if (d.type === 'pcaservo'){
+      const sn = document.getElementById('sn-' + id); if (sn){ const bb = sn.getAttribute('x1') + ' ' + sn.getAttribute('y1'); sn.setAttribute('transform', `rotate(${(s.deg - 90).toFixed(1)} ${bb})`); }
+    } else if (d.type === 'pcacont'){
+      if (mr){ mr.setAttribute('class', 'rot' + (s.spd ? ' spin' : '')); mr.style.animationDuration = (0.4 + (100 - Math.abs(s.spd || 0))/100).toFixed(2) + 's'; mr.style.animationDirection = s.spd < 0 ? 'reverse' : 'normal'; }
+    }
+  }
+  for (const d of devices){
+    if (!DEVICE_TYPES[d.type].pca) continue;
+    const t = document.getElementById('wch-' + sid(d.id));
+    if (t) t.textContent = servoUs(d) + ' µs';
+    setWa(document.getElementById(`wa-${sid(d.id)}-CH`), true, true, 1.6);
+  }
+  for (const [p] of pinBlockSig) litPins.add(p);
+  document.querySelectorAll('#wiringSvg .pd').forEach(el => {
+    const on = el.id && litPins.has(Number(el.id.slice(3)));
+    el.classList.toggle('on', !!on); el.setAttribute('r', on ? '6' : '4.6');
+  });
+}
+
+/* ───────────── 장치 편집 ───────────── */
+function markFocusRow(){ document.querySelectorAll('#devList .dev').forEach(el => el.classList.toggle('focus', el.dataset.id === focusDev)); }
+function pinSelect(id, value, cls){
+  const sel = document.createElement('select'); sel.id = id;
+  const none = document.createElement('option'); none.value = ''; none.textContent = '미정'; sel.appendChild(none);
+  for (const p of ESP32_PINS){
+    const o = document.createElement('option'); o.value = String(p);
+    o.textContent = 'GPIO ' + p + (FLASH.includes(p) ? ' (플래시)' : INPUT_ONLY.includes(p) ? ' (입력 전용)' : '');
+    if (FLASH.includes(p)) o.disabled = true;
+    sel.appendChild(o);
+  }
+  sel.value = value == null ? '' : String(value);
+  if (cls) sel.classList.add(cls);
+  return sel;
+}
+function renderDeviceList(){
+  const list = $('#devList');
+  if (list.contains(document.activeElement)) return;
+  const {state} = checkDevices();
+  list.innerHTML = '';
+  for (const d of devices){
+    const T = DEVICE_TYPES[d.type];
+    const box = document.createElement('div'); box.className = 'dev' + (focusDev === d.id ? ' focus' : ''); box.dataset.id = d.id;
+    const head = document.createElement('div'); head.className = 'dev-head';
+    const name = document.createElement('input'); name.id = 'dn-' + robotKey + '-' + sid(d.id); name.value = d.name; name.setAttribute('aria-label', '장치 이름');
+    name.addEventListener('change', () => { d.name = name.value.trim() || d.name; saveDevices(); name.blur(); renderAll(); });
+    const del = document.createElement('button'); del.type = 'button'; del.className = 'btn sm'; del.textContent = '삭제'; del.id = 'dd-' + robotKey + '-' + sid(d.id);
+    del.addEventListener('click', () => { devices = devices.filter(x => x !== d); rt.delete(d.id); if (focusDev === d.id) focusDev = null; saveDevices(); renderAll(); });
+    head.append(name, del);
+    const type = document.createElement('div'); type.className = 'dev-type'; type.textContent = T.label + (T.addr ? ` · I²C ${T.addr}` : '') + ' · ' + T.power + (d.type === 'pcaservo' ? ` · 가동 ${d.min ?? 0}~${d.max ?? 180}°` : '') + (d.note ? ' · ' + d.note : '');
+    const pins = document.createElement('div'); pins.className = 'dev-pins';
+    for (const [r, kind] of T.roles){
+      const lab = document.createElement('label'); lab.htmlFor = 'dp-' + robotKey + '-' + sid(d.id) + '-' + r;
+      lab.innerHTML = `<i style="background:${KIND_COL[kind]}"></i>${r}`;
+      const sel = pinSelect(lab.htmlFor, d.pins[r], state[d.id + '.' + r]);
+      sel.addEventListener('change', () => { d.pins[r] = sel.value === '' ? null : Number(sel.value); saveDevices(); sel.blur(); renderAll(); });
+      pins.append(lab, sel);
+    }
+    if (T.pca){
+      const lab = document.createElement('label'); lab.htmlFor = 'dc-' + robotKey + '-' + sid(d.id);
+      lab.innerHTML = `<i style="background:${KIND_COL.pwm}"></i>채널`;
+      const sel = document.createElement('select'); sel.id = lab.htmlFor;
+      const none = document.createElement('option'); none.value = ''; none.textContent = '미정'; sel.appendChild(none);
+      for (let ch = 0; ch < 16; ch++){ const o = document.createElement('option'); o.value = String(ch); o.textContent = 'PCA9685 CH' + ch; sel.appendChild(o); }
+      sel.value = d.ch == null ? '' : String(d.ch);
+      if (state[d.id + '.CH']) sel.classList.add(state[d.id + '.CH']);
+      sel.addEventListener('change', () => { d.ch = sel.value === '' ? null : Number(sel.value); saveDevices(); sel.blur(); renderAll(); });
+      pins.append(lab, sel);
+    }
+    box.append(head, type, pins);
+    box.addEventListener('focusin', () => { if (focusDev !== d.id){ focusDev = d.id; renderWiring(); markFocusRow(); } });
+    list.appendChild(box);
+  }
+}
+function renderIssues(){
+  const {issues, pwm, buses} = checkDevices();
+  const list = $('#pinIssues'); list.innerHTML = '';
+  const errs = issues.filter(i => i[0] === 'err').length;
+  const head = document.createElement('li');
+  head.className = (errs || pwm > 16) ? 'err' : (issues.length ? 'warn' : 'ok');
+  head.textContent = (issues.length ? `확인할 것 ${issues.length}개 (오류 ${errs})` : '배선 문제 없음') + ` · PWM 채널 ${pwm}/16 · I²C 버스 ${buses.size}/2`;
+  list.appendChild(head);
+  for (const [k, m] of issues){ const li = document.createElement('li'); li.className = k === 'err' ? 'err' : 'warn'; li.textContent = m; list.appendChild(li); }
+  if (pwm > 16){ const li = document.createElement('li'); li.className = 'err'; li.textContent = 'PWM 채널(LEDC)이 16개를 넘습니다. 모터·서보나 PWM 핀 블록을 줄이세요.'; list.appendChild(li); }
+}
+function addDevice(type){
+  const T = DEVICE_TYPES[type];
+  const same = devices.filter(d => d.type === type).length;
+  const d = {id:'d' + Date.now().toString(36), type, name: T.defaultName + (same ? ' ' + (same + 1) : ''), pins:{}};
+  for (const [r] of T.roles) d.pins[r] = null;
+  if (T.pca){ const used = new Set(devices.filter(x => DEVICE_TYPES[x.type].pca).map(x => x.ch)); d.ch = [...Array(16).keys()].find(c => !used.has(c)) ?? null; if (type === 'pcaservo'){ d.min = 0; d.max = 180; } }
+  if (T.addr){ const bus = devices.find(x => DEVICE_TYPES[x.type].addr && x.pins.SDA != null); if (bus){ d.pins.SDA = bus.pins.SDA; d.pins.SCL = bus.pins.SCL; } }
+  devices.push(d); R(d); focusDev = d.id; saveDevices(); renderAll();
+  setMsg(`${d.name}을(를) 추가했습니다. 장치 카드에서 핀을 고르세요.`);
+}
+
+/* ───────────── 실시간 모니터 ───────────── */
+function renderMonitor(){
+  const mon = $('#monitor'); mon.innerHTML = '';
+  const rows = devices.slice();
+  for (const d of rows){
+    const T = DEVICE_TYPES[d.type];
+    const box = document.createElement('div'); box.className = 'mrow';
+    box.innerHTML = `<div><div class="n">${esc(d.name)}</div><div class="t">${esc(T.short)}</div></div><div class="v" id="mv-${sid(d.id)}"></div><canvas id="mc-${sid(d.id)}" width="200" height="28" aria-hidden="true"></canvas>`;
+    if (T.sensor && d.type !== 'button'){
+      const S = T.sensor, inp = document.createElement('input');
+      inp.type = 'range'; inp.min = S.min; inp.max = S.max; inp.step = S.bool ? 1 : 1; inp.value = R(d).value; inp.id = 'vi-' + robotKey + '-' + sid(d.id);
+      inp.setAttribute('aria-label', d.name + ' 가상 입력');
+      inp.addEventListener('input', () => { R(d).value = Number(inp.value); });
+      const lab = document.createElement('div'); lab.className = 'vi'; lab.textContent = `가상 입력: ${S.name}${S.unit ? ' (' + S.unit + ')' : ''} — 실제 로봇에선 센서 값이 들어옵니다`;
+      box.append(inp, lab);
+    }
+    if (d.type === 'button' && d.id !== 'boot'){
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'btn sm'; b.textContent = '누르고 있기'; b.style.gridColumn = '1 / -1';
+      b.addEventListener('pointerdown', () => { R(d).pressed = true; }); ['pointerup','pointerleave','pointercancel'].forEach(ev => b.addEventListener(ev, () => { R(d).pressed = false; }));
+      box.append(b);
+    }
+    mon.appendChild(box);
+  }
+  if (robotKey === 'soccer'){
+    for (const [key, label, min, max] of [['ballDir','공 방향 (°)', -180, 180], ['ballStr','공 세기', 0, 100]]){
+      const box = document.createElement('div'); box.className = 'mrow';
+      box.innerHTML = `<div><div class="n">${label}</div><div class="t">IR 공 센서 · 가상 입력</div></div><div class="v" id="mv-v-${key}">${virt[key]}</div>`;
+      const inp = document.createElement('input'); inp.type = 'range'; inp.min = min; inp.max = max; inp.value = virt[key]; inp.id = 'vi-ball-' + key; inp.setAttribute('aria-label', label);
+      inp.addEventListener('input', () => { virt[key] = Number(inp.value); $('#mv-v-' + key).textContent = inp.value; });
+      box.append(inp); mon.appendChild(box);
+    }
+  }
+}
+let lastHist = 0;
+function updateMonitor(now){
+  const sample = now - lastHist >= 100;
+  if (sample) lastHist = now;
+  const ink = getComputedStyle(document.documentElement).getPropertyValue('--spark').trim() || '#2F74D0';
+  const fill = getComputedStyle(document.documentElement).getPropertyValue('--spark-fill').trim() || 'rgba(47,116,208,.12)';
+  for (const d of devices){
+    const v = numValue(d);
+    if (sample){ const h = hist.get(d.id) || []; h.push(v); if (h.length > 60) h.shift(); hist.set(d.id, h); }
+    const mv = document.getElementById('mv-' + sid(d.id)); if (mv) mv.textContent = cardValue(d);
+    const cv = document.getElementById('mc-' + sid(d.id)); if (!cv || !sample) continue;
+    const h = hist.get(d.id) || [], c = cv.getContext('2d'), w = cv.width, hh = cv.height;
+    c.clearRect(0, 0, w, hh);
+    if (h.length < 2) continue;
+    let lo = Math.min(...h), hi = Math.max(...h);
+    if (d.type === 'drv8871' || d.type === 'encmotor'){ lo = Math.min(lo, -1); hi = Math.max(hi, 1); }
+    if (hi - lo < 1e-6){ hi += 1; lo -= 1; }
+    const X = i => (i/(60 - 1))*w, Y = val => hh - 3 - (val - lo)/(hi - lo)*(hh - 6);
+    c.beginPath(); h.forEach((val, i) => { i ? c.lineTo(X(i + 60 - h.length), Y(val)) : c.moveTo(X(i + 60 - h.length), Y(val)); });
+    c.strokeStyle = ink; c.lineWidth = 1.6; c.stroke();
+    c.lineTo(X(59), hh); c.lineTo(X(60 - h.length), hh); c.closePath(); c.fillStyle = fill; c.fill();
+  }
+}
+
+/* ───────────── 조종 (Xbox 컨트롤러) ───────────── */
+function manualActive(){ return !run || !!run.manual; }
+function onDriveInput(){
+  if (run && countdown <= 0 && !run.padOwned && !run.manual) endRun('컨트롤러를 움직여 프로그램을 멈췄습니다. 조종 모드로 돌아왔습니다.', '');
+}
+function pressButton(name){
+  pad.btn.add(name);
+  if (name === 'LT' || name === 'RT') pad[name] = 100;
+  if (pad.btn.has('VIEW') && pad.btn.has('MENU')){ if (run) endRun('비상 정지 (보기 + 메뉴)', 'err'); stopDrive(); return; }
+  if (run && countdown <= 0 && hatsOf('rb_pad', name).length){ trigger('rb_pad', name); return; }
+  if (run && ['UP','DOWN','LEFT','RIGHT'].includes(name)) onDriveInput();
+  if (robotKey === 'middle' && manualActive() && !(run && run.padOwned)) middleButton(name);
+}
+function releaseButton(name){ pad.btn.delete(name); if (name === 'LT' || name === 'RT') pad[name] = 0; }
+function setJointDeg(d, deg){
+  if (!d) return false;
+  const lo = d.min ?? 0, hi = d.max ?? 180, v = Math.max(lo, Math.min(hi, Number(deg) || 0));
+  if (d.type === 'pcaservo'){ R(d).target = v; markPca(); return true; }
+  if (d.type === 'servo' && d.pins.SIG != null){ R(d).target = Math.round(500 + v/180*2000); return true; }
+  return false;
+}
+function setPose(p){ setJointDeg(devices.find(d => d.arm === 'sh'), POSES[p][0]); setJointDeg(devices.find(d => d.arm === 'el'), POSES[p][1]); }
+function armMoving(){ return devices.some(d => d.type === 'pcaservo' && Math.abs(R(d).target - R(d).deg) > 0.5 || d.type === 'servo' && R(d).target != null && Math.abs(R(d).target - R(d).us) > 2); }
+async function waitArm(){ const ts = performance.now(); await frame(); while (armMoving() && performance.now() - ts < 2500) await frame(); }
+function markPca(){ for (const d of devices) if (d.type === 'pca9685') R(d).flash = performance.now() + 160; }
+function servoUs(d){ const s = R(d); return d.type === 'pcacont' ? Math.round(1500 + (s.spd || 0)/100*200) : Math.round(500 + (s.deg || 0)/180*2000); }
+function middleButton(name){   // 펌웨어: A 집기, B 놓기 (RB는 베이스 회전 보조키)
+  if (name === 'A') grab(true);
+  else if (name === 'B') grab(false);
+}
+function grab(on){
+  const pump = devices.find(d => d.tag === 'pump'), valve = devices.find(d => d.tag === 'valve');
+  if (pump) R(pump).on = on;
+  if (valve){ R(valve).on = !on; R(valve).until = on ? 0 : performance.now() + VENT_MS; }
+}
+function middleManual(dt){
+  // 주행: 방향키 ↑↓ 전후(기본 50%, RT로 100%까지), ←→ 제자리 회전, LT+←→ 옆걸음, 대각선, 놓으면 능동 제동
+  const up = pad.btn.has('UP'), dn = pad.btn.has('DOWN'), lf = pad.btn.has('LEFT'), rt_ = pad.btn.has('RIGHT');
+  const y = up ? 1 : dn ? -1 : 0, x = rt_ ? 1 : lf ? -1 : 0, s = 50 + 50*pad.RT/100;
+  if (!x && !y){ if (!run) brakeAll(); }
+  else if (x && y) mec(y*s, x*s, 0);
+  else if (y) mec(y*s, 0, 0);
+  else if (pad.LT > 10) mec(0, x*s, 0);
+  else mec(0, 0, x*s);
+  // 팔: 오른쪽 스틱↕ 어깨, 왼쪽 스틱↕ 엘보, RB+오른쪽 스틱↔ 베이스 (이때 어깨·엘보 정지)
+  const dz = v => Math.abs(v) > DEADZONE ? v : 0;
+  const base = devices.find(d => d.arm === 'tt'), sh = devices.find(d => d.arm === 'sh'), el = devices.find(d => d.arm === 'el');
+  if (pad.btn.has('RB')){
+    if (base){ const v = dz(pad.RX); if (v || !run) R(base).spd = v; if (v) markPca(); }
+    return;
+  }
+  if (base && !run && R(base).spd){ R(base).spd = 0; markPca(); }
+  const ry = dz(pad.RY), ly = dz(pad.LY);
+  if (sh && ry) setJointDeg(sh, R(sh).target + ry/100*ARM_DEG_S*dt);
+  if (el && ly) setJointDeg(el, R(el).target + ly/100*ARM_DEG_S*dt);
+}
+function manualDrive(dt){
+  if (robotKey === 'middle'){ middleManual(dt); return; }
+  if (pad.LT > 10){ brakeAll(); return; }
+  const up = pad.btn.has('UP'), dn = pad.btn.has('DOWN'), lf = pad.btn.has('LEFT'), rt_ = pad.btn.has('RIGHT');
+  if (!up && !dn && !lf && !rt_){ if (!run) brakeAll(); return; }    // 축구로봇 펌웨어: 방향키를 놓으면 제동
+  const s = 70 + 30*pad.RT/100;
+  if (up && lf) skid(s*0.5, s); else if (up && rt_) skid(s, s*0.5);
+  else if (dn && lf) skid(-s*0.5, -s); else if (dn && rt_) skid(-s, -s*0.5);
+  else if (up) skid(s, s); else if (dn) skid(-s, -s);
+  else if (lf) skid(-s*0.9, s*0.9); else skid(s*0.9, -s*0.9);
+}
+function bindStick(el){
+  const knob = el.querySelector('.knob'), side = el.dataset.stick, RAD = 28;
+  let active = false;
+  const set = (dx, dy) => {
+    const dd_ = Math.hypot(dx, dy); if (dd_ > RAD){ dx = dx/dd_*RAD; dy = dy/dd_*RAD; }
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    pad[side + 'X'] = Math.round(dx/RAD*100); pad[side + 'Y'] = Math.round(-dy/RAD*100);
+  };
+  const move = e => {
+    if (!active) return;
+    const r = el.getBoundingClientRect();
+    set(e.clientX - (r.left + r.width/2), e.clientY - (r.top + r.height/2));
+    if (Math.abs(pad[side + 'X']) > 15 || Math.abs(pad[side + 'Y']) > 15) onDriveInput();
+  };
+  const up = () => { active = false; set(0, 0); };
+  el.addEventListener('pointerdown', e => { active = true; try{ el.setPointerCapture(e.pointerId); }catch(_){} move(e); });
+  el.addEventListener('pointermove', move);
+  el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+}
+
+/* ───────────── 장치 시간 진행 ───────────── */
+function tick(dt, now){
+  if (robotKey !== 'sumo' && manualActive() && countdown <= 0) manualDrive(dt);
+  for (const d of devices){
+    const s = R(d);
+    if (d.type === 'servo' && s.target != null){
+      if (s.us == null) s.us = s.target;
+      const step = 1200*dt; s.us += Math.max(-step, Math.min(step, s.target - s.us));   // SERVO_SLEW 12 µs / 10 ms
+    }
+    if (d.type === 'pcaservo' && Math.abs(s.target - s.deg) > 0.01){
+      const step = ARM_DEG_S*dt; s.deg += Math.max(-step, Math.min(step, s.target - s.deg));
+      if (Math.abs(s.target - s.deg) > 0.3) markPca();
+    }
+    if (d.type === 'stepper' && Math.abs(s.goal - s.pos) >= 1){
+      const step = s.sps*dt; s.pos += Math.max(-step, Math.min(step, s.goal - s.pos));
+    }
+    if (d.type === 'encmotor'){
+      const target = s.brake ? 0 : s.cmd/100*DEVICE_TYPES.encmotor.rpm;
+      s.rpm += (target - s.rpm)*Math.min(1, dt*6);
+      s.count += s.rpm/60*DEVICE_TYPES.encmotor.cpr*dt;
+    }
+    if (d.tag === 'valve' && s.until && now > s.until){ s.on = false; s.until = 0; }
+    if (d.type === 'oled' && d.pins.SDA != null && Math.floor(now/200) !== Math.floor((now - dt*1000)/200)) s.flash = now + 60;
+  }
+}
+let lastT = performance.now(), lastUi = 0;
+function loop(now){
+  const dt = Math.min(0.05, (now - lastT)/1000); lastT = now;
+  tick(dt, now);
+  if (now - lastUi >= 80){ lastUi = now; updateSignals(); updateMonitor(now); updatePanels(); }
+  requestAnimationFrame(loop);
+}
+function updatePanels(){
+  const Rb = ROBOTS[robotKey];
+  const mode = run ? (countdown > 0 ? '준비 ' + Math.ceil(countdown) : '블록 ▶') : '조종';
+  const t = run && countdown <= 0 ? (performance.now() - t0)/1000 : 0;
+  const lines = [`${Rb.tag} · ${mode}`];
+  if (robotKey === 'middle'){
+    const sh = devices.find(d => d.arm === 'sh'), pump = devices.find(d => d.tag === 'pump');
+    const el = devices.find(d => d.arm === 'el');
+    lines.push(`SH ${sh ? Math.round(R(sh).deg) : '--'} EL ${el ? Math.round(R(el).deg) : '--'} ${pump && R(pump).on ? 'GRAB' : 'off'}`);
+  } else if (robotKey === 'sumo'){
+    const fl = devices.find(d => d.side === 'L'), fr = devices.find(d => d.side === 'R'), ds = devices.find(d => DIST_TYPES.includes(d.type));
+    lines.push(`FL ${fl ? Math.round(R(fl).value) : '--'} FR ${fr ? Math.round(R(fr).value) : '--'} D ${ds ? Math.round(R(ds).value) + 'cm' : '--'}`);
+  } else lines.push(`BALL ${String(virt.ballDir).padStart(4, ' ')}°  STR ${virt.ballStr}`);
+  lines.push(oledText ? '> ' + oledText.slice(0, 18) : '');
+  lines.push(`T ${t.toFixed(1)}s`);
+  $('#oled').textContent = lines.join('\n');
+  const pm = $('#padMode'), help = $('#padHelp');
+  let pmode, kind, tip;
+  if (!run){ pmode = '조종 모드'; kind = '';
+    tip = robotKey === 'middle' ? '방향키 주행(50%), RT 가속, LT+←→ 옆걸음, 놓으면 제동 · 오른쪽 스틱↕ 어깨, 왼쪽 스틱↕ 엘보, RB+오른쪽 스틱↔ 베이스 · A 집기, B 놓기 · 보기+메뉴 비상 정지'
+                                : '방향키 주행, RT 부스터, LT 급정거, 방향키를 놓으면 제동 · 보기+메뉴 비상 정지'; }
+  else if (run.padOwned){ pmode = '프로그램이 컨트롤러를 읽는 중'; kind = 'run'; tip = '컨트롤러 입력은 블록의 "Xbox … 값 / 눌렸나?"로 들어갑니다.'; }
+  else if (run.manual){ pmode = '블록 + 기본 조종'; kind = 'run'; tip = '"기본 조종 켜기" 상태라 프로그램이 도는 동안에도 직접 몰 수 있습니다.'; }
+  else { pmode = '블록 실행 중'; kind = 'wait'; tip = '스틱이나 방향키를 움직이면 프로그램이 멈춥니다. 매크로가 걸린 버튼은 그 블록을 실행합니다.'; }
+  if (pm.textContent !== pmode){ pm.textContent = pmode; pm.className = 'pill' + (kind ? ' ' + kind : ''); }
+  if (help.textContent !== tip) help.textContent = tip;
+}
+
+/* ───────────── 실행기 (VM 흉내) ───────────── */
+class Stop extends Error {}
+class End extends Error {}
+function frame(){ return new Promise((res, rej) => requestAnimationFrame(() => (!run || run.stopped) ? rej(new Stop()) : res())); }
+function sleep(ms){
+  return new Promise((res, rej) => {
+    const ts = performance.now();
+    const f = () => { if (!run || run.stopped) return rej(new Stop()); if (performance.now() - ts >= ms) return res(); requestAnimationFrame(f); };
+    f();
+  });
+}
+function hl(b){ if (!run || run.stopped) throw new Stop(); ws.highlightBlock(b.id); }
+const clampPct = v => Math.max(-100, Math.min(100, Number(v) || 0));
+const posNum = (v, max) => Math.max(0, Math.min(max, Number(v) || 0));
+async function straight(cm, pct){
+  const Rb = ROBOTS[robotKey], v = Rb.vmax*pct/100, sgn = Math.sign(cm);
+  Rb.mecanum ? mec(sgn*pct, 0, 0) : skid(sgn*pct, sgn*pct);
+  await sleep(Math.abs(cm)/v*1000); stopDrive();
+}
+async function turnDeg(deg, dir){
+  const Rb = ROBOTS[robotKey], v = Rb.vmax*0.5, w = 2*v/Rb.wid, s = dir === 'R' ? 1 : -1;
+  Rb.mecanum ? mec(0, 0, 50*s) : skid(50*s, -50*s);
+  await sleep((deg*Math.PI/180)/w*1000); stopDrive();
+}
+async function val(b, name, def){ const t = b.getInputTargetBlock(name); return t ? await evalExpr(t) : def; }
+function varName(b){ const f = b.getField('VAR'); try{ return f.getVariable().name; }catch(e){ return f.getText(); } }
+function getVar(nm){ for (let i = run.frames.length - 1; i >= 0; i--) if (run.frames[i].has(nm)) return run.frames[i].get(nm); return run.vars.has(nm) ? run.vars.get(nm) : 0; }
+function setVar(nm, v){ for (let i = run.frames.length - 1; i >= 0; i--) if (run.frames[i].has(nm)){ run.frames[i].set(nm, v); return; } run.vars.set(nm, v); }
+async function callProc(b){
+  const nm = b.getFieldValue('NAME'), def = Blockly.Procedures.getDefinition(nm, ws);
+  if (!def) throw new Error(`'${nm}' 블록 정의를 찾을 수 없습니다.`);
+  const params = def.getVars(), fm = new Map();
+  for (let i = 0; i < params.length; i++) fm.set(params[i], await val(b, 'ARG' + i, 0));
+  run.frames.push(fm);
+  try{ await execChain(def.getInputTargetBlock('STACK')); return def.getInput('RETURN') ? await val(def, 'RETURN', 0) : 0; }
+  finally{ run.frames.pop(); }
+}
+function floorDev(side){ const list = devices.filter(d => d.type === 'irfloor' || d.type === 'tcs3472'); return list.find(d => d.side === side) || list[side === 'L' ? 0 : 1] || list[0]; }
+function distDev(){ return devices.find(d => DIST_TYPES.includes(d.type)); }
+function devOrMsg(b){ const d = devById(b.getFieldValue('DEV')); if (!d) setMsg('블록의 장치를 찾을 수 없습니다. 장치 추가에서 넣거나 블록에서 다시 고르세요.'); return d; }
+function guardPin(p){ const u = deviceUsingPin(p); if (u){ setMsg(`GPIO ${p}은 ${u[0].name} ${u[1]}에 쓰이는 핀이라 블록에서 바꾸지 않았습니다.`); return true; } return false; }
+
+async function evalExpr(b){
+  switch (b.type){
+    case 'math_number': return Number(b.getFieldValue('NUM'));
+    case 'text': return b.getFieldValue('TEXT');
+    case 'logic_boolean': return b.getFieldValue('BOOL') === 'TRUE';
+    case 'logic_negate': return !(await val(b, 'BOOL', false));
+    case 'logic_operation': { const a = await val(b, 'A', false); return b.getFieldValue('OP') === 'AND' ? (a && await val(b, 'B', false)) : (a || await val(b, 'B', false)); }
+    case 'logic_compare': { const a = await val(b, 'A', 0), c = await val(b, 'B', 0); return ({EQ:a == c, NEQ:a != c, LT:a < c, LTE:a <= c, GT:a > c, GTE:a >= c})[b.getFieldValue('OP')]; }
+    case 'math_arithmetic': {
+      const a = Number(await val(b, 'A', 0)), c = Number(await val(b, 'B', 0));
+      switch (b.getFieldValue('OP')){ case 'ADD': return a + c; case 'MINUS': return a - c; case 'MULTIPLY': return a*c; case 'DIVIDE': return c === 0 ? 0 : a/c; default: return Math.pow(a, c); }
+    }
+    case 'math_random_int': { const lo = Math.round(await val(b, 'FROM', 1)), hi = Math.round(await val(b, 'TO', 10)); return Math.floor(Math.random()*(Math.abs(hi - lo) + 1)) + Math.min(lo, hi); }
+    case 'variables_get': return getVar(varName(b));
+    case 'procedures_callreturn': return await callProc(b);
+    case 'rb_floor': { const d = floorDev(b.getFieldValue('SIDE')); return d ? sensorValue(d) : 0; }
+    case 'rb_edge': { const d = floorDev(b.getFieldValue('SIDE')); return d ? sensorValue(d) > 50 : false; }
+    case 'rb_dist': { const d = distDev(); return d ? sensorValue(d) : 999; }
+    case 'rb_see': { const d = distDev(); return d ? sensorValue(d) < 70 : false; }
+    case 'rb_ball_dir': return virt.ballDir;
+    case 'rb_ball_str': return virt.ballStr;
+    case 'rb_timer': return Math.round((performance.now() - t0)/100)/10;
+    case 'rb_pad_pressed': return pad.btn.has(b.getFieldValue('BTN'));
+    case 'rb_pad_axis': return pad[b.getFieldValue('AXIS')] || 0;
+    case 'rb_pad_connected': return pad.connected;
+    case 'rb_sensor_val': { const d = devOrMsg(b); return d ? sensorValue(d) : 0; }
+    case 'rb_enc_read': { const d = devOrMsg(b); if (!d) return 0; const s = R(d); return b.getFieldValue('WHAT') === 'RPM' ? Math.round(s.rpm) : Math.round(s.count); }
+    case 'rb_dread': {
+      const p = Number(b.getFieldValue('PIN')), u = deviceUsingPin(p);
+      if (u && (u[0].type === 'button' || u[0].type === 'e18')) return sigOf(u[0], u[1]).mode === 'high';
+      const g = pinBlockSig.get(p); return !!(g && g.mode === 'high');
+    }
+    case 'rb_aread': { const p = Number(b.getFieldValue('PIN')), u = deviceUsingPin(p); if (u && DEVICE_TYPES[u[0].type].sensor){ sensorValue(u[0]); return adcOf(u[0]); } return 0; }
+    default: return 0;
+  }
+}
+async function execChain(b){ while (b){ await execStmt(b); b = b.getNextBlock(); } }
+async function execStmt(b){
+  hl(b);
+  const Rb = ROBOTS[robotKey];
+  switch (b.type){
+    case 'rb_move_cells': { const cells = posNum(await val(b, 'N', 1), 20); await straight((b.getFieldValue('DIR') === 'B' ? -1 : 1)*cells*CELL, 60); break; }
+    case 'rb_turn': await turnDeg(posNum(await val(b, 'DEG', 90), 1080), b.getFieldValue('DIR')); break;
+    case 'rb_stop': stopDrive(); await frame(); break;
+    case 'rb_drive_time': {
+      const pct = Math.abs(clampPct(await val(b, 'SPEED', 70))), sec = posNum(await val(b, 'SEC', 1), 30), sg = b.getFieldValue('DIR') === 'B' ? -1 : 1;
+      Rb.mecanum ? mec(sg*pct, 0, 0) : skid(sg*pct, sg*pct);
+      await sleep(sec*1000); stopDrive(); break;
+    }
+    case 'rb_wheels': {
+      const l = clampPct(await val(b, 'L', 0)), r = clampPct(await val(b, 'R', 0));
+      Rb.mecanum ? mec((l + r)/2, 0, (l - r)/2) : skid(l, r); await frame(); break;
+    }
+    case 'rb_strafe': { const cells = posNum(await val(b, 'N', 1), 20), v = Rb.vmax*0.6; mec(0, (b.getFieldValue('DIR') === 'L' ? -1 : 1)*60, 0); await sleep(cells*CELL/v*1000); stopDrive(); break; }
+    case 'rb_diag': { const dg = b.getFieldValue('DIR'), sec = posNum(await val(b, 'SEC', 1), 30); mec((dg[0] === 'F' ? 1 : -1)*45, (dg[1] === 'R' ? 1 : -1)*45, 0); await sleep(sec*1000); stopDrive(); break; }
+    case 'rb_vector': { const y = clampPct(await val(b, 'Y', 0)), x = clampPct(await val(b, 'X', 0)), r = clampPct(await val(b, 'R', 0)); mec(y, x, r); await frame(); break; }
+    case 'rb_pose': setPose(b.getFieldValue('POSE')); await waitArm(); break;
+    case 'rb_layer': { const k = Math.max(1, Math.min(3, Math.round(await val(b, 'N', 1)))); setPose('l' + k); await waitArm(); break; }
+    case 'rb_base_turn': {
+      const sec = posNum(await val(b, 'SEC', 0.5), 10), d = devices.find(x => x.arm === 'tt');
+      if (d){ R(d).spd = b.getFieldValue('DIR') === 'L' ? -50 : 50; markPca(); await sleep(sec*1000); R(d).spd = 0; markPca(); } else setMsg('베이스 서보 장치가 없습니다.');
+      break;
+    }
+    case 'rb_joint': {
+      const deg = Math.max(0, Math.min(180, Number(await val(b, 'DEG', 90)) || 0)), d = devices.find(x => x.arm === b.getFieldValue('JOINT'));
+      if (!setJointDeg(d, deg)) setMsg('그 관절의 서보가 아직 연결되지 않았습니다.');
+      await waitArm(); break;
+    }
+    case 'rb_grab': grab(b.getFieldValue('ACT') === 'grab'); await sleep(300); break;
+    case 'rb_motor': {
+      const d = devOrMsg(b), pct = Math.round(clampPct(await val(b, 'SPEED', 0)));
+      if (d){ const s = R(d); if (d.type === 'pcacont'){ s.spd = pct; markPca(); } else { s.cmd = pct; s.brake = false; } } await frame(); break;
+    }
+    case 'rb_servo_dev': { const d = devOrMsg(b), deg = Math.max(0, Math.min(180, Number(await val(b, 'DEG', 90)) || 0)); if (d) setJointDeg(d, deg); await frame(); break; }
+    case 'rb_stepper': {
+      const d = devOrMsg(b), steps = Math.round(Number(await val(b, 'STEPS', 0)) || 0), sps = Math.max(1, Math.min(4000, Math.round(Number(await val(b, 'SPS', 400)) || 400)));
+      if (d){ const s = R(d); s.en = true; s.sps = sps; s.goal = s.pos + steps; while (Math.abs(s.goal - s.pos) >= 1) await frame(); }
+      break;
+    }
+    case 'rb_output': { const d = devOrMsg(b), on = b.getFieldValue('VAL') === 'ON'; if (d){ if (d.type === 'buzzer') R(d).until = on ? Infinity : 0; else R(d).on = on; } await frame(); break; }
+    case 'rb_enc_reset': { const d = devOrMsg(b); if (d) R(d).count = 0; break; }
+    case 'rb_timer_reset': t0 = performance.now(); break;
+    case 'rb_beep': { const bz = devices.find(d => d.type === 'buzzer'); if (bz) R(bz).until = performance.now() + 150; setMsg(bz ? '부저: 삑' : '삑 (부저 장치가 없어 화면 표시만)'); await sleep(150); break; }
+    case 'rb_show': { const v = await val(b, 'TEXT', ''); oledText = String(typeof v === 'number' ? Math.round(v*10)/10 : v); const o = devices.find(d => d.type === 'oled'); if (o) R(o).flash = performance.now() + 200; await frame(); break; }
+    case 'rb_wait': await sleep(posNum(await val(b, 'SEC', 1), 600)*1000); break;
+    case 'rb_wait_until': while (!(await val(b, 'COND', false))) await frame(); break;
+    case 'rb_end': throw new End();
+    case 'controls_repeat_ext': { const times = Math.max(0, Math.min(10000, Math.round(await val(b, 'TIMES', 0)))); for (let i = 0; i < times; i++){ await execChain(b.getInputTargetBlock('DO')); await frame(); } break; }
+    case 'rb_forever': for (;;){ await execChain(b.getInputTargetBlock('DO')); await frame(); }
+    case 'controls_whileUntil': {
+      const until = b.getFieldValue('MODE') === 'UNTIL';
+      for (;;){ const c = !!(await val(b, 'BOOL', false)); if (until ? c : !c) break; await execChain(b.getInputTargetBlock('DO')); await frame(); }
+      break;
+    }
+    case 'controls_if': {
+      let done = false;
+      for (let i = 0; b.getInput('IF' + i); i++) if (await val(b, 'IF' + i, false)){ await execChain(b.getInputTargetBlock('DO' + i)); done = true; break; }
+      if (!done && b.getInput('ELSE')) await execChain(b.getInputTargetBlock('ELSE'));
+      break;
+    }
+    case 'variables_set': setVar(varName(b), await val(b, 'VALUE', 0)); break;
+    case 'math_change': setVar(varName(b), Number(getVar(varName(b))) + Number(await val(b, 'DELTA', 1))); break;
+    case 'procedures_callnoreturn': await callProc(b); break;
+    case 'rb_pad_rumble': { const sec = posNum(await val(b, 'SEC', 0.3), 5), c = $('#padCard'); c.classList.add('rumble'); setTimeout(() => c.classList.remove('rumble'), sec*1000); await frame(); break; }
+    case 'rb_manual': run.manual = b.getFieldValue('MODE') === 'ON'; if (!run.manual) stopDrive(); await frame(); break;
+    case 'rb_dwrite': { const p = Number(b.getFieldValue('PIN')); if (!guardPin(p)){ pinBlockSig.set(p, {mode: b.getFieldValue('VAL') === '1' ? 'high' : 'low'}); } await frame(); break; }
+    case 'rb_servo_pin': { const p = Number(b.getFieldValue('PIN')); const deg = Math.max(0, Math.min(180, Number(await val(b, 'DEG', 90)) || 0)); if (!guardPin(p)) pinBlockSig.set(p, {mode:'pwm', text:`${Math.round(500 + deg/180*2000)} µs`}); await frame(); break; }
+    case 'rb_pwm_pin': { const p = Number(b.getFieldValue('PIN')); const duty = Math.max(0, Math.min(100, Number(await val(b, 'DUTY', 50)) || 0)); if (!guardPin(p)) pinBlockSig.set(p, {mode:'pwm', text:`${Math.round(duty)}%`}); await frame(); break; }
+    case 'rb_pin_mode': { const p = Number(b.getFieldValue('PIN')); if (!guardPin(p)) pinBlockSig.set(p, {mode: b.getFieldValue('MODE') === 'INPUT_PULLUP' ? 'high' : 'low'}); break; }
+    default: break;
+  }
+}
+function hatsOf(type, padBtn){ return ws.getTopBlocks(true).filter(b => b.type === type && (!padBtn || b.getFieldValue('PAD') === padBtn)); }
+async function runTask(hat){
+  if (run.tasks.has(hat.id)) return;
+  run.tasks.add(hat.id);
+  try{ await execChain(hat.getNextBlock()); }
+  catch(e){ if (e instanceof End) endRun('프로그램을 끝냈습니다.', ''); else if (!(e instanceof Stop)) endRun('오류: ' + (e.message || e), 'err'); }
+  finally{ if (run) run.tasks.delete(hat.id); }
+}
+async function startRun(){
+  if (run) return;
+  saveWorkspace();
+  const types = new Set(ws.getAllBlocks(false).map(b => b.type));
+  run = {stopped:false, tasks:new Set(), vars:new Map(), frames:[], manual:false, padOwned:['rb_pad_pressed','rb_pad_axis','rb_pad_connected'].some(t => types.has(t))};
+  pinBlockSig.clear(); oledText = ''; stopDrive();
+  setStatus('준비', 'wait'); setButtons(true); setMsg(robotKey === 'sumo' ? '대회 규정대로 3초 뒤 출발합니다.' : '1초 뒤 출발합니다.');
+  const delay = ROBOTS[robotKey].delay, ts = performance.now();
+  countdown = delay/1000;
+  try{ while (performance.now() - ts < delay){ await frame(); countdown = Math.max(0, (delay - (performance.now() - ts))/1000); } }
+  catch(e){ return; }
+  countdown = 0; t0 = performance.now();
+  setStatus('실행 중', 'run'); setMsg('');
+  const starts = hatsOf('rb_start');
+  const waiting = hatsOf('rb_button').length + hatsOf('rb_pad').length > 0;
+  if (!starts.length && !waiting){ endRun('"▶ 시작하면" 블록이 없습니다. 이벤트에서 끌어오세요.', 'err'); return; }
+  await Promise.all(starts.map(runTask));
+  if (run && !run.stopped){
+    if (waiting){ setStatus('버튼 기다리는 중', 'wait'); stopDrive(); }
+    else endRun('프로그램이 끝났습니다.', '');
+  }
+}
+function endRun(msg, kind){
+  if (!run) return;
+  run.stopped = true; run = null;
+  stopDrive(); countdown = 0;
+  for (const d of devices){ if (d.type === 'stepper'){ const s = R(d); s.goal = s.pos; } if (d.type === 'pcacont') R(d).spd = 0; }
+  ws.highlightBlock(null); setButtons(false);
+  setStatus(kind === 'err' ? '멈춤' : '대기', kind === 'err' ? 'err' : '');
+  if (msg) setMsg(msg);
+}
+function trigger(type, padBtn){
+  if (!run || countdown > 0){ setMsg('먼저 실행을 누르세요. 실행 중에 버튼을 누르면 해당 블록이 동작합니다.'); return; }
+  const hats = hatsOf(type, padBtn);
+  if (!hats.length){ setMsg(type === 'rb_pad' ? `"Xbox ${padBtn}를 누르면" 블록이 없습니다.` : '"로봇 버튼을 누르면" 블록이 없습니다.'); return; }
+  setStatus('실행 중', 'run'); hats.forEach(h => runTask(h));
+}
+
+/* ───────────── C++ 보기 (레벨 3) ───────────── */
+function cppNames(){
+  const vars = ws.getAllVariables().map(v => v.name);
+  const procs = ws.getTopBlocks(true).filter(b => b.type.startsWith('procedures_def')).map(b => b.getFieldValue('NAME'));
+  const ok = s => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s);
+  const vmap = new Map(), pmap = new Map();
+  vars.forEach((v, i) => vmap.set(v, ok(v) ? v : 'v' + (i + 1)));
+  procs.forEach((p, i) => pmap.set(p, ok(p) ? p : 'block' + (i + 1)));
+  return {vmap, pmap};
+}
+const lit = v => JSON.stringify(String(v));
+const devName = b => { const d = devById(b.getFieldValue('DEV')); return lit(d ? d.name : '?'); };
+function deviceSetupLines(){
+  const L = [];
+  const {buses} = checkDevices();
+  let bi = 0; const busIdx = new Map();
+  for (const k of buses.keys()){ const [a, c] = k.split('/'); busIdx.set(k, bi); L.push(`  rb.addI2C(${bi++}, ${a}, ${c});${bi === 2 ? '   // Wire1' : ''}`); }
+  const bus = d => busIdx.get(d.pins.SDA + '/' + d.pins.SCL) ?? 0;
+  for (const d of devices){
+    const p = d.pins, T = DEVICE_TYPES[d.type], nm = lit(d.name);
+    const missing = T.roles.some(([r]) => p[r] == null);
+    if (missing){ L.push(`  // ${d.name}: 핀 미정`); continue; }
+    switch (d.type){
+      case 'drv8871': L.push(`  rb.addMotor(${nm}, ${p.IN1}, ${p.IN2});`); break;
+      case 'encmotor': L.push(`  rb.addEncoderMotor(${nm}, ${p.IN1}, ${p.IN2}, ${p.ENCA}, ${p.ENCB}, ${T.cpr});`); break;
+      case 'stepper': L.push(`  rb.addStepper(${nm}, ${p.STEP}, ${p.DIR}, ${p.EN});`); break;
+      case 'servo': L.push(`  rb.addServo(${nm}, ${p.SIG});`); break;
+      case 'mosfet': case 'led': L.push(`  rb.addOutput(${nm}, ${p[T.roles[0][0]]});`); break;
+      case 'buzzer': L.push(`  rb.addBuzzer(${nm}, ${p.SIG});`); break;
+      case 'button': L.push(`  rb.addButton(${nm}, ${p.SIG});`); break;
+      case 'irfloor': L.push(`  rb.addAnalogSensor(${nm}, ${p.AO});`); break;
+      case 'sharp': L.push(`  rb.addSharpIR(${nm}, ${p.OUT});`); break;
+      case 'hcsr04': L.push(`  rb.addUltrasonic(${nm}, ${p.TRIG}, ${p.ECHO});`); break;
+      case 'e18': L.push(`  rb.addDigitalSensor(${nm}, ${p.OUT});`); break;
+      case 'tfluna': L.push(`  rb.addTFLuna(${nm}, ${bus(d)});      // I2C 0x10`); break;
+      case 'vl53l0x': L.push(`  rb.addVL53L0X(${nm}, ${bus(d)});     // I2C 0x29`); break;
+      case 'tcs3472': L.push(`  rb.addTCS3472(${nm}, ${bus(d)});     // I2C 0x29`); break;
+      case 'oled': L.push(`  rb.addOled(${bus(d)});             // I2C 0x3C`); break;
+      case 'pca9685': L.push(`  rb.addPCA9685(${bus(d)}, 0x40);`); break;
+      case 'pcaservo': L.push(d.ch == null ? `  // ${d.name}: 채널 미정` : `  rb.addServoPCA(${nm}, ${d.ch}, ${d.min ?? 0}, ${d.max ?? 180});`); break;
+      case 'pcacont': L.push(d.ch == null ? `  // ${d.name}: 채널 미정` : `  rb.addContinuousServoPCA(${nm}, ${d.ch}, 1500, 200);   // 정지점·속도폭 µs`); break;
+      case 'vacuum': L.push(`  rb.addAnalogSensor(${nm}, ${p.OUT});`); break;
+    }
+  }
+  const pos = {}; for (const d of devices) if (d.pos) pos[d.pos] = lit(d.name);
+  if (pos.FL && pos.FR && pos.BL && pos.BR) L.push(`  rb.setDrive(${robotKey === 'middle' ? 'DRIVE_MECANUM' : 'DRIVE_SKID'}, ${pos.FL}, ${pos.FR}, ${pos.BL}, ${pos.BR});`);
+  return L.map(x => x + '\n').join('');
+}
+function genCpp(){
+  const {vmap, pmap} = cppNames();
+  const vn = b => { const nm = varName(b); return vmap.get(nm) || nm; };
+  const pad_ = d => '  '.repeat(d);
+  const E = b => {
+    if (!b) return '0';
+    const V = (nm, def) => { const t = b.getInputTargetBlock(nm); return t ? E(t) : def; };
+    switch (b.type){
+      case 'math_number': return String(Number(b.getFieldValue('NUM')));
+      case 'text': return lit(b.getFieldValue('TEXT'));
+      case 'logic_boolean': return b.getFieldValue('BOOL') === 'TRUE' ? 'true' : 'false';
+      case 'logic_negate': return `!(${V('BOOL', 'false')})`;
+      case 'logic_operation': return `(${V('A', 'false')} ${b.getFieldValue('OP') === 'AND' ? '&&' : '||'} ${V('B', 'false')})`;
+      case 'logic_compare': return `(${V('A', '0')} ${({EQ:'==', NEQ:'!=', LT:'<', LTE:'<=', GT:'>', GTE:'>='})[b.getFieldValue('OP')]} ${V('B', '0')})`;
+      case 'math_arithmetic': { const op = b.getFieldValue('OP'); return op === 'POWER' ? `pow(${V('A','0')}, ${V('B','0')})` : `(${V('A','0')} ${({ADD:'+', MINUS:'-', MULTIPLY:'*', DIVIDE:'/'})[op]} ${V('B','0')})`; }
+      case 'math_random_int': return `random(${V('FROM','1')}, ${V('TO','10')} + 1)`;
+      case 'variables_get': return vn(b);
+      case 'procedures_callreturn': { const args = []; for (let i = 0; b.getInput('ARG' + i); i++) args.push(V('ARG' + i, '0')); return `${pmap.get(b.getFieldValue('NAME')) || 'f'}(${args.join(', ')})`; }
+      case 'rb_floor': return `rb.floor(${b.getFieldValue('SIDE') === 'L' ? 'LEFT' : 'RIGHT'})`;
+      case 'rb_edge': return `rb.isEdge(${b.getFieldValue('SIDE') === 'L' ? 'LEFT' : 'RIGHT'})`;
+      case 'rb_dist': return 'rb.distanceCm()';
+      case 'rb_see': return 'rb.seesTarget()';
+      case 'rb_ball_dir': return 'rb.ballDirection()';
+      case 'rb_ball_str': return 'rb.ballStrength()';
+      case 'rb_timer': return 'rb.timer()';
+      case 'rb_pad_pressed': return `rb.pad.pressed(BTN_${b.getFieldValue('BTN')})`;
+      case 'rb_pad_axis': return `rb.pad.axis(AXIS_${b.getFieldValue('AXIS')})`;
+      case 'rb_pad_connected': return 'rb.pad.connected()';
+      case 'rb_sensor_val': return `rb.sensor(${devName(b)}).read()`;
+      case 'rb_enc_read': return `rb.encoder(${devName(b)}).${b.getFieldValue('WHAT') === 'RPM' ? 'rpm' : 'count'}()`;
+      case 'rb_dread': return `digitalRead(${b.getFieldValue('PIN')})`;
+      case 'rb_aread': return `analogRead(${b.getFieldValue('PIN')})`;
+      default: return '0';
+    }
+  };
+  const S = (b, d) => { let out = ''; for (; b; b = b.getNextBlock()) out += S1(b, d); return out; };
+  const S1 = (b, d) => {
+    const V = (nm, def) => { const t = b.getInputTargetBlock(nm); return t ? E(t) : def; };
+    const p = pad_(d);
+    switch (b.type){
+      case 'rb_move_cells': return `${p}rb.${b.getFieldValue('DIR') === 'B' ? 'backwardCells' : 'forwardCells'}(${V('N','1')});\n`;
+      case 'rb_turn': return `${p}rb.${b.getFieldValue('DIR') === 'L' ? 'turnLeft' : 'turnRight'}(${V('DEG','90')});\n`;
+      case 'rb_stop': return `${p}rb.brake();\n`;
+      case 'rb_drive_time': return `${p}rb.drive(${b.getFieldValue('DIR') === 'B' ? '-' : ''}${V('SPEED','70')}, ${V('SEC','1')});\n`;
+      case 'rb_wheels': return `${p}rb.wheels(${V('L','0')}, ${V('R','0')});\n`;
+      case 'rb_strafe': return `${p}rb.strafe(${b.getFieldValue('DIR') === 'L' ? '-' : ''}${V('N','1')});\n`;
+      case 'rb_diag': return `${p}rb.diagonal(DIAG_${b.getFieldValue('DIR')}, ${V('SEC','1')});\n`;
+      case 'rb_vector': return `${p}rb.move(${V('Y','0')}, ${V('X','0')}, ${V('R','0')});\n`;
+      case 'rb_pose': return `${p}rb.armPose(POSE_${b.getFieldValue('POSE').toUpperCase()});\n`;
+      case 'rb_layer': return `${p}rb.armLayer(${V('N','1')});\n`;
+      case 'rb_joint': return `${p}rb.joint(${({sh:'JOINT_SHOULDER', el:'JOINT_ELBOW'})[b.getFieldValue('JOINT')] || 'JOINT_SHOULDER'}, ${V('DEG','90')});\n`;
+      case 'rb_base_turn': return `${p}rb.turnBase(${b.getFieldValue('DIR') === 'L' ? '-' : ''}50, ${V('SEC','0.5')});\n`;
+      case 'rb_grab': return `${p}rb.${b.getFieldValue('ACT') === 'grab' ? 'grab' : 'release'}();\n`;
+      case 'rb_motor': return `${p}rb.motor(${devName(b)}).speed(${V('SPEED','0')});\n`;
+      case 'rb_servo_dev': return `${p}rb.servo(${devName(b)}).write(${V('DEG','90')});\n`;
+      case 'rb_stepper': return `${p}rb.stepper(${devName(b)}).move(${V('STEPS','0')}, ${V('SPS','400')});\n`;
+      case 'rb_output': return `${p}rb.output(${devName(b)}).${b.getFieldValue('VAL') === 'ON' ? 'on' : 'off'}();\n`;
+      case 'rb_enc_reset': return `${p}rb.encoder(${devName(b)}).reset();\n`;
+      case 'rb_timer_reset': return `${p}rb.resetTimer();\n`;
+      case 'rb_beep': return `${p}rb.beep();\n`;
+      case 'rb_show': return `${p}rb.show(${V('TEXT','""')});\n`;
+      case 'rb_wait': return `${p}rb.wait(${V('SEC','1')});\n`;
+      case 'rb_wait_until': return `${p}while (!(${V('COND','false')})) rb.yield();\n`;
+      case 'rb_end': return `${p}rb.end();\n`;
+      case 'rb_pad_rumble': return `${p}rb.pad.rumble(${V('SEC','0.3')});\n`;
+      case 'rb_manual': return `${p}rb.manualDrive(${b.getFieldValue('MODE') === 'ON' ? 'true' : 'false'});\n`;
+      case 'rb_dwrite': return `${p}digitalWrite(${b.getFieldValue('PIN')}, ${b.getFieldValue('VAL') === '1' ? 'HIGH' : 'LOW'});\n`;
+      case 'rb_servo_pin': return `${p}rb.servoWrite(${b.getFieldValue('PIN')}, ${V('DEG','90')});\n`;
+      case 'rb_pwm_pin': return `${p}rb.pwmWrite(${b.getFieldValue('PIN')}, ${V('DUTY','50')});\n`;
+      case 'rb_pin_mode': return `${p}pinMode(${b.getFieldValue('PIN')}, ${b.getFieldValue('MODE')});\n`;
+      case 'controls_repeat_ext': return `${p}for (int i = 0; i < ${V('TIMES','0')}; i++) {\n${S(b.getInputTargetBlock('DO'), d + 1)}${p}  rb.yield();\n${p}}\n`;
+      case 'rb_forever': return `${p}while (true) {\n${S(b.getInputTargetBlock('DO'), d + 1)}${p}  rb.yield();\n${p}}\n`;
+      case 'controls_whileUntil': { const c = V('BOOL','false'); const cond = b.getFieldValue('MODE') === 'UNTIL' ? `!(${c})` : c; return `${p}while (${cond}) {\n${S(b.getInputTargetBlock('DO'), d + 1)}${p}  rb.yield();\n${p}}\n`; }
+      case 'controls_if': {
+        let out = '';
+        for (let i = 0; b.getInput('IF' + i); i++) out += `${i === 0 ? p + 'if' : ' else if'} (${V('IF' + i, 'false')}) {\n${S(b.getInputTargetBlock('DO' + i), d + 1)}${p}}`;
+        if (b.getInput('ELSE')) out += ` else {\n${S(b.getInputTargetBlock('ELSE'), d + 1)}${p}}`;
+        return out + '\n';
+      }
+      case 'variables_set': return `${p}${vn(b)} = ${V('VALUE','0')};\n`;
+      case 'math_change': return `${p}${vn(b)} += ${V('DELTA','1')};\n`;
+      case 'procedures_callnoreturn': { const args = []; for (let i = 0; b.getInput('ARG' + i); i++) args.push(V('ARG' + i, '0')); return `${p}${pmap.get(b.getFieldValue('NAME')) || 'f'}(${args.join(', ')});\n`; }
+      default: return '';
+    }
+  };
+  const robotConst = {soccer:'ROBOT_SOCCER', middle:'ROBOT_MIDDLE', sumo:'ROBOT_SUMO'}[robotKey];
+  let out = `#include <RoboBlock.h>   // ESP32 + Bluepad32 (Xbox 컨트롤러)\n\nRoboBlock rb(${robotConst});\n`;
+  const vars = [...vmap.entries()];
+  if (vars.length){ out += '\n'; for (const [orig, c] of vars) out += `float ${c} = 0;${orig !== c ? '  // ' + orig : ''}\n`; }
+  const tops = ws.getTopBlocks(true);
+  for (const b of tops.filter(t => t.type.startsWith('procedures_def'))){
+    const nm = b.getFieldValue('NAME'), cn = pmap.get(nm), params = b.getVars(), ret = b.type === 'procedures_defreturn';
+    out += `\n${ret ? 'float' : 'void'} ${cn}(${params.map(x => 'float ' + (vmap.get(x) || x)).join(', ')}) {${cn !== nm ? '  // ' + nm : ''}\n${S(b.getInputTargetBlock('STACK'), 1)}${ret ? '  return ' + (b.getInputTargetBlock('RETURN') ? E(b.getInputTargetBlock('RETURN')) : '0') + ';\n' : ''}}\n`;
+  }
+  const handlers = [];
+  tops.filter(t => t.type === 'rb_start').forEach((b, i) => handlers.push(['onStart' + (i ? i + 1 : ''), b, 'rb.onStart(']));
+  tops.filter(t => t.type === 'rb_button').forEach((b, i) => handlers.push(['onButton' + (i ? i + 1 : ''), b, 'rb.onButton(']));
+  tops.filter(t => t.type === 'rb_pad').forEach((b, i) => handlers.push(['onPad' + b.getFieldValue('PAD') + (i ? i + 1 : ''), b, `rb.onPad(BTN_${b.getFieldValue('PAD')}, `]));
+  for (const [fn, b] of handlers) out += `\nvoid ${fn}() {\n${S(b.getNextBlock(), 1)}}\n`;
+  out += `\nvoid setup() {\n  // 장치와 핀 (에디터의 배선도에서 지정, 실제 로봇은 NVS에도 저장)\n${deviceSetupLines()}  rb.begin();   // Bluepad32 시작, Xbox 컨트롤러 페어링 유지\n`;
+  for (const pp of new Set(ws.getAllBlocks(false).filter(x => x.type === 'rb_dwrite').map(x => x.getFieldValue('PIN')))) out += `  pinMode(${pp}, OUTPUT);\n`;
+  for (const [fn, , reg] of handlers) out += `  ${reg}${fn});\n`;
+  out += `}\n\nvoid loop() {\n  rb.update();   // VM, Bluepad32, 센서, 모니터 전송(10 Hz)\n}\n`;
+  return out;
+}
+function estimateBytes(){
+  let blocks = 0, bytes = 12;
+  for (const b of ws.getAllBlocks(false)){ if (b.isShadow() && b.type === 'math_number'){ bytes += 3; continue; } blocks++; bytes += b.outputConnection ? 2 : 3; }
+  return {blocks, bytes};
+}
+function refreshCode(){
+  if (level < 3) return;
+  try{
+    $('#cppOut').textContent = genCpp();
+    const e = estimateBytes();
+    $('#sizeOut').textContent = `로봇으로 보낼 바이트코드 약 ${e.bytes} B (블록 ${e.blocks}개, 추정치). 블록으로 실행할 때는 이 바이트코드가 무선으로 갑니다.`;
+  }catch(e){ $('#cppOut').textContent = '// 코드를 만들지 못했습니다: ' + e.message; }
+}
+
+/* ───────────── UI ───────────── */
+function setStatus(text, kind){ const p = $('#statusPill'); p.textContent = text; p.className = 'pill' + (kind ? ' ' + kind : ''); }
+function setMsg(text){ $('#simMsg').textContent = text || ' '; }
+function setButtons(running){ $('#runBtn').disabled = running; $('#stopBtn').disabled = !running; }
+function renderAll(){ renderWiring(); renderDeviceList(); renderIssues(); renderMonitor(); refreshCode(); }
+function applyRobot(key, fromUser){
+  if (run) endRun('', '');
+  if (fromUser) saveWorkspace();
+  robotKey = key; store.set('rb.robot', key); focusDev = null;
+  document.querySelectorAll('#robotSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.robot === key)));
+  $('#wireTitle').textContent = 'ESP32 배선과 신호 · ' + ROBOTS[key].label;
+  $('#padCard').hidden = key === 'sumo';
+  loadDevices(); resetRuntime();
+  ws.updateToolbox(buildToolbox(robotKey, level));
+  loadWorkspace(key);
+  stopDrive();
+  renderAll();
+  setStatus('대기', '');
+  setMsg(key === 'sumo' ? '스모는 자율 전용입니다. 실행한 뒤 모니터의 바닥·거리 슬라이더를 움직여 보세요.'
+       : key === 'middle' ? '예제: 빨간 블록 집어 오른쪽 매트에 놓기 + Xbox Y = 2층 매크로'
+       : '예제: 2칸씩 네모 그리기. 실행하면 모터 드라이버 선이 바뀌는 것을 볼 수 있습니다.');
+}
+function applyLevel(lv){
+  level = lv; store.set('rb.level', lv);
+  document.querySelectorAll('#levelSeg button').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.level) === lv)));
+  ws.updateToolbox(buildToolbox(robotKey, level));
+  $('#codeCard').hidden = lv < 3;
+  refreshCode();
+  setTimeout(() => Blockly.svgResize(ws), 0);
+}
+const addSel = $('#addType');
+for (const t of ADDABLE){ const o = document.createElement('option'); o.value = t; o.textContent = DEVICE_TYPES[t].label; addSel.appendChild(o); }
+$('#addDev').addEventListener('click', () => addDevice(addSel.value));
+$('#devReset').addEventListener('click', () => { store.set('rb.devices4.' + robotKey, null); loadDevices(); resetRuntime(); focusDev = null; stopDrive(); renderAll(); setMsg('기본 구성으로 되돌렸습니다.'); });
+document.querySelectorAll('#robotSeg button').forEach(b => b.addEventListener('click', () => { if (b.dataset.robot !== robotKey) applyRobot(b.dataset.robot, true); }));
+document.querySelectorAll('#levelSeg button').forEach(b => b.addEventListener('click', () => applyLevel(Number(b.dataset.level))));
+$('#runBtn').addEventListener('click', startRun);
+$('#stopBtn').addEventListener('click', () => endRun('정지했습니다. 구동 모터는 제동, 흡착은 유지됩니다.', ''));
+$('#bootBtn').addEventListener('click', () => { bootDownUntil = performance.now() + 400; if (!run) startRun(); else trigger('rb_button'); });
+$('#zoomIn').addEventListener('click', () => ws.zoomCenter(1));
+$('#zoomOut').addEventListener('click', () => ws.zoomCenter(-1));
+$('#zoomFit').addEventListener('click', () => ws.zoomToFit());
+$('#wireFull').addEventListener('click', () => { const c = $('#wireCard'), on = !c.classList.contains('full'); c.classList.toggle('full', on); $('#wireFull').textContent = on ? '닫기' : '크게 보기'; });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#wireCard').classList.contains('full')){ $('#wireCard').classList.remove('full'); $('#wireFull').textContent = '크게 보기'; } });
+$('#connectBtn').addEventListener('click', () => { $('#connectCard').hidden = false; });
+$('#connectClose').addEventListener('click', () => { $('#connectCard').hidden = true; });
+$('#copyBtn').addEventListener('click', () => {
+  const text = $('#cppOut').textContent;
+  const sel = () => { const r = document.createRange(); r.selectNodeContents($('#cppOut')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); };
+  try{ navigator.clipboard.writeText(text).then(() => { $('#copyBtn').textContent = '복사됨'; setTimeout(() => { $('#copyBtn').textContent = '복사'; }, 1400); }, sel); }catch(e){ sel(); }
+});
+document.querySelectorAll('.stick').forEach(bindStick);
+document.querySelectorAll('.gbtn').forEach(b => {
+  const nm = b.dataset.btn;
+  b.addEventListener('pointerdown', e => { e.preventDefault(); b.classList.add('on'); pressButton(nm); });
+  const up = () => { if (!b.classList.contains('on')) return; b.classList.remove('on'); releaseButton(nm); };
+  b.addEventListener('pointerup', up); b.addEventListener('pointerleave', up); b.addEventListener('pointercancel', up);
+  b.addEventListener('click', e => { if (e.detail === 0){ b.classList.add('on'); pressButton(nm); setTimeout(up, 200); } });
+});
+let saveTimer = 0;
+ws.addChangeListener(e => {
+  if (e.isUiEvent) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { saveWorkspace(); refreshCode(); renderIssues(); }, 250);
+});
+function syncTheme(){ ws.setTheme(isDark() ? THEMES.dark : THEMES.light); }
+if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncTheme);
+new MutationObserver(syncTheme).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
+window.addEventListener('resize', () => Blockly.svgResize(ws));
+if (window.ResizeObserver) new ResizeObserver(() => Blockly.svgResize(ws)).observe(document.querySelector('.ws'));
+
+applyLevel(level);
+applyRobot(robotKey, false);
+requestAnimationFrame(ts => { lastT = ts; loop(ts); });
+})();
+</script>
+
+</body>
+</html>
