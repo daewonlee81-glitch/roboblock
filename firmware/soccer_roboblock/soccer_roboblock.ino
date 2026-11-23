@@ -12,7 +12,8 @@
  *   OLED: 켜지면 PC 연결 상태(PC : waiting / PC:OK)와 웹 블루투스 이름(ID : RoboBlock-XXXX)을 보여 주고,
  *         연결·해제되는 순간 2초 동안 PC LINKED / PC UNLINK를 크게 띄운다.
  *
- * 파일: soccer_roboblock.ino (이 파일), RoboLink.h/.cpp (BLE GATT 서버), roboblock_gatt.h (GATT 표)
+ * 파일: 이 .ino 하나로 완결됩니다 (BLE GATT 서버와 GATT 표가 안에 들어 있음).
+ *       필요한 라이브러리: Adafruit SSD1306 (+ Adafruit GFX)
  *   소프트웨어에서 좌/우 2채널로 묶어 제어 (스키드 스티어)
  * 모터: JGA25-370 12V 1200rpm x 4
  * 전원: DXF 3S 리포 11.1V 650mAh 100C (XT60) → 보드 DC 잭 + Y분기로 4개 드라이버 VM
@@ -41,9 +42,287 @@
 #include <Bluepad32.h>
 #include <Preferences.h>        // 페어링 MAC 영구 저장 (NVS)
 #include <string.h>             // memcmp
-#include "RoboLink.h"           // 로보블록 웹 에디터 연결 (BLE)
+#include "btstack.h"            // Bluepad32 안의 BTstack (로보블록 웹 연결용)
 #include "soc/soc.h"            // 브라운아웃 디텍터 비활성화용
 #include "soc/rtc_cntl_reg.h"
+
+// =====================================================================
+// RoboLink — 로보블록 웹 에디터와 Web Bluetooth(BLE GATT)로 통신
+//   Bluepad32가 쓰는 BTstack에 GATT 서버(peripheral)를 함께 올린다.
+//   Bluepad32 자체 BLE 서비스는 꺼 둔다(BP32.enableBLEService(false)).
+//   BTstack 콜백은 BTstack 태스크에서, loop()는 다른 태스크에서 돈다:
+//   받은 명령은 큐에 넣어 loop()에서 꺼내고, 상태 알림은 BTstack 태스크로 넘겨 보낸다.
+// =====================================================================
+
+// ---- GATT 표 (roboblock.gatt를 BTstack tool/compile_gatt.py로 만든 것) ----
+
+// Reference: https://en.cppreference.com/w/cpp/feature_test
+#if __cplusplus >= 200704L
+constexpr
+#endif
+static const uint8_t profile_data[] =
+{
+    // ATT DB Version
+    1,
+
+    // 0x0001 PRIMARY_SERVICE-GAP_SERVICE
+    0x0a, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x28, 0x00, 0x18, 
+    // 0x0002 CHARACTERISTIC-GAP_DEVICE_NAME - READ
+    0x0d, 0x00, 0x02, 0x00, 0x02, 0x00, 0x03, 0x28, 0x02, 0x03, 0x00, 0x00, 0x2a, 
+    // 0x0003 VALUE CHARACTERISTIC-GAP_DEVICE_NAME - READ -'RoboBlock'
+    // READ_ANYBODY
+    0x11, 0x00, 0x02, 0x00, 0x03, 0x00, 0x00, 0x2a, 0x52, 0x6f, 0x62, 0x6f, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 
+    // 0x0004 PRIMARY_SERVICE-GATT_SERVICE
+    0x0a, 0x00, 0x02, 0x00, 0x04, 0x00, 0x00, 0x28, 0x01, 0x18, 
+    // 0x0005 CHARACTERISTIC-GATT_DATABASE_HASH - READ
+    0x0d, 0x00, 0x02, 0x00, 0x05, 0x00, 0x03, 0x28, 0x02, 0x06, 0x00, 0x2a, 0x2b, 
+    // 0x0006 VALUE CHARACTERISTIC-GATT_DATABASE_HASH - READ -''
+    // READ_ANYBODY
+    0x18, 0x00, 0x02, 0x00, 0x06, 0x00, 0x2a, 0x2b, 0xee, 0x68, 0x51, 0x67, 0x13, 0xc6, 0xf6, 0x4d, 0x7e, 0x78, 0xa0, 0x0b, 0x72, 0x3c, 0xcd, 0x40, 
+    // RoboBlock 서비스
+    // 0x0007 PRIMARY_SERVICE-7B1C0000-5A3E-4C2B-9F6D-2B7E0D1A0C00
+    0x18, 0x00, 0x02, 0x00, 0x07, 0x00, 0x00, 0x28, 0x00, 0x0c, 0x1a, 0x0d, 0x7e, 0x2b, 0x6d, 0x9f, 0x2b, 0x4c, 0x3e, 0x5a, 0x00, 0x00, 0x1c, 0x7b, 
+    // 명령 (에디터 → 로봇)
+    // 0x0008 CHARACTERISTIC-7B1C0001-5A3E-4C2B-9F6D-2B7E0D1A0C00 - WRITE | WRITE_WITHOUT_RESPONSE | DYNAMIC
+    0x1b, 0x00, 0x02, 0x00, 0x08, 0x00, 0x03, 0x28, 0x0c, 0x09, 0x00, 0x00, 0x0c, 0x1a, 0x0d, 0x7e, 0x2b, 0x6d, 0x9f, 0x2b, 0x4c, 0x3e, 0x5a, 0x01, 0x00, 0x1c, 0x7b, 
+    // 0x0009 VALUE CHARACTERISTIC-7B1C0001-5A3E-4C2B-9F6D-2B7E0D1A0C00 - WRITE | WRITE_WITHOUT_RESPONSE | DYNAMIC
+    // WRITE_ANYBODY
+    0x16, 0x00, 0x0c, 0x03, 0x09, 0x00, 0x00, 0x0c, 0x1a, 0x0d, 0x7e, 0x2b, 0x6d, 0x9f, 0x2b, 0x4c, 0x3e, 0x5a, 0x01, 0x00, 0x1c, 0x7b, 
+    // 상태 (로봇 → 에디터, 10 Hz 알림)
+    // 0x000a CHARACTERISTIC-7B1C0002-5A3E-4C2B-9F6D-2B7E0D1A0C00 - READ | NOTIFY | DYNAMIC
+    0x1b, 0x00, 0x02, 0x00, 0x0a, 0x00, 0x03, 0x28, 0x12, 0x0b, 0x00, 0x00, 0x0c, 0x1a, 0x0d, 0x7e, 0x2b, 0x6d, 0x9f, 0x2b, 0x4c, 0x3e, 0x5a, 0x02, 0x00, 0x1c, 0x7b, 
+    // 0x000b VALUE CHARACTERISTIC-7B1C0002-5A3E-4C2B-9F6D-2B7E0D1A0C00 - READ | NOTIFY | DYNAMIC
+    // READ_ANYBODY
+    0x16, 0x00, 0x02, 0x03, 0x0b, 0x00, 0x00, 0x0c, 0x1a, 0x0d, 0x7e, 0x2b, 0x6d, 0x9f, 0x2b, 0x4c, 0x3e, 0x5a, 0x02, 0x00, 0x1c, 0x7b, 
+    // 0x000c CLIENT_CHARACTERISTIC_CONFIGURATION
+    // READ_ANYBODY, WRITE_ANYBODY
+    0x0a, 0x00, 0x0e, 0x01, 0x0c, 0x00, 0x02, 0x29, 0x00, 0x00, 
+    // 로봇 정보 (종류, 펌웨어, 핀)
+    // 0x000d CHARACTERISTIC-7B1C0003-5A3E-4C2B-9F6D-2B7E0D1A0C00 - READ | DYNAMIC
+    0x1b, 0x00, 0x02, 0x00, 0x0d, 0x00, 0x03, 0x28, 0x02, 0x0e, 0x00, 0x00, 0x0c, 0x1a, 0x0d, 0x7e, 0x2b, 0x6d, 0x9f, 0x2b, 0x4c, 0x3e, 0x5a, 0x03, 0x00, 0x1c, 0x7b, 
+    // 0x000e VALUE CHARACTERISTIC-7B1C0003-5A3E-4C2B-9F6D-2B7E0D1A0C00 - READ | DYNAMIC
+    // READ_ANYBODY
+    0x16, 0x00, 0x02, 0x03, 0x0e, 0x00, 0x00, 0x0c, 0x1a, 0x0d, 0x7e, 0x2b, 0x6d, 0x9f, 0x2b, 0x4c, 0x3e, 0x5a, 0x03, 0x00, 0x1c, 0x7b, 
+    // END
+    0x00, 0x00, 
+}; // total size 153 bytes 
+
+
+//
+// list service handle ranges
+//
+#define ATT_SERVICE_GAP_SERVICE_START_HANDLE 0x0001
+#define ATT_SERVICE_GAP_SERVICE_END_HANDLE 0x0003
+#define ATT_SERVICE_GAP_SERVICE_01_START_HANDLE 0x0001
+#define ATT_SERVICE_GAP_SERVICE_01_END_HANDLE 0x0003
+#define ATT_SERVICE_GATT_SERVICE_START_HANDLE 0x0004
+#define ATT_SERVICE_GATT_SERVICE_END_HANDLE 0x0006
+#define ATT_SERVICE_GATT_SERVICE_01_START_HANDLE 0x0004
+#define ATT_SERVICE_GATT_SERVICE_01_END_HANDLE 0x0006
+#define ATT_SERVICE_7B1C0000_5A3E_4C2B_9F6D_2B7E0D1A0C00_START_HANDLE 0x0007
+#define ATT_SERVICE_7B1C0000_5A3E_4C2B_9F6D_2B7E0D1A0C00_END_HANDLE 0x000e
+#define ATT_SERVICE_7B1C0000_5A3E_4C2B_9F6D_2B7E0D1A0C00_01_START_HANDLE 0x0007
+#define ATT_SERVICE_7B1C0000_5A3E_4C2B_9F6D_2B7E0D1A0C00_01_END_HANDLE 0x000e
+
+//
+// list mapping between characteristics and handles
+//
+#define ATT_CHARACTERISTIC_GAP_DEVICE_NAME_01_VALUE_HANDLE 0x0003
+#define ATT_CHARACTERISTIC_GATT_DATABASE_HASH_01_VALUE_HANDLE 0x0006
+#define ATT_CHARACTERISTIC_7B1C0001_5A3E_4C2B_9F6D_2B7E0D1A0C00_01_VALUE_HANDLE 0x0009
+#define ATT_CHARACTERISTIC_7B1C0002_5A3E_4C2B_9F6D_2B7E0D1A0C00_01_VALUE_HANDLE 0x000b
+#define ATT_CHARACTERISTIC_7B1C0002_5A3E_4C2B_9F6D_2B7E0D1A0C00_01_CLIENT_CONFIGURATION_HANDLE 0x000c
+#define ATT_CHARACTERISTIC_7B1C0003_5A3E_4C2B_9F6D_2B7E0D1A0C00_01_VALUE_HANDLE 0x000e
+
+// ---- RoboLink 본체 ----
+#define CMD_HANDLE     ATT_CHARACTERISTIC_7B1C0001_5A3E_4C2B_9F6D_2B7E0D1A0C00_01_VALUE_HANDLE
+#define STATUS_HANDLE  ATT_CHARACTERISTIC_7B1C0002_5A3E_4C2B_9F6D_2B7E0D1A0C00_01_VALUE_HANDLE
+#define STATUS_CCC     ATT_CHARACTERISTIC_7B1C0002_5A3E_4C2B_9F6D_2B7E0D1A0C00_01_CLIENT_CONFIGURATION_HANDLE
+#define INFO_HANDLE    ATT_CHARACTERISTIC_7B1C0003_5A3E_4C2B_9F6D_2B7E0D1A0C00_01_VALUE_HANDLE
+
+
+portMUX_TYPE rl_mux = portMUX_INITIALIZER_UNLOCKED;
+
+volatile hci_con_handle_t rl_conHandle = HCI_CON_HANDLE_INVALID;
+volatile bool rl_isConnected = false;
+volatile bool rl_notifyOn = false;
+volatile bool rl_notifyPending = false;
+volatile bool rl_notifyQueued = false;   // notifyReg가 BTstack 큐에 들어가 있는 동안 true
+volatile bool rl_discQueued = false;
+
+// 명령 큐 (BTstack 태스크 → loop)
+struct RlCmd { uint8_t len; uint8_t d[20]; };
+const int rl_QN = 16;
+RlCmd rl_queue[rl_QN];
+volatile uint8_t rl_qHead = 0, rl_qTail = 0;
+
+uint8_t rl_statusBuf[20];
+uint8_t rl_statusLen = 0;
+
+char rl_infoStr[200];
+uint8_t rl_advData[31];
+uint8_t rl_advLen = 0;
+uint8_t rl_scanResp[31];
+uint8_t rl_scanLen = 0;
+
+btstack_context_callback_registration_t rl_initReg;
+btstack_context_callback_registration_t rl_notifyReg;
+btstack_context_callback_registration_t rl_discReg;
+
+uint16_t rl_onRead(hci_con_handle_t, uint16_t handle, uint16_t offset, uint8_t* buffer, uint16_t size) {
+  if (handle == STATUS_HANDLE) {
+    uint8_t tmp[20];
+    uint16_t n;
+    portENTER_CRITICAL(&rl_mux);
+    n = rl_statusLen;
+    memcpy(tmp, rl_statusBuf, n);
+    portEXIT_CRITICAL(&rl_mux);
+    return att_read_callback_handle_blob(tmp, n, offset, buffer, size);
+  }
+  if (handle == INFO_HANDLE) {
+    return att_read_callback_handle_blob((const uint8_t*)rl_infoStr, strlen(rl_infoStr), offset, buffer, size);
+  }
+  if (handle == STATUS_CCC) {
+    uint8_t v[2] = {(uint8_t)(rl_notifyOn ? 1 : 0), 0};
+    return att_read_callback_handle_blob(v, 2, offset, buffer, size);
+  }
+  return 0;
+}
+
+int rl_onWrite(hci_con_handle_t, uint16_t handle, uint16_t mode, uint16_t offset, uint8_t* buffer, uint16_t size) {
+  (void)mode;
+  if (handle == STATUS_CCC) {
+    rl_notifyOn = size >= 2 && little_endian_read_16(buffer, 0) == GATT_CLIENT_CHARACTERISTICS_CONFIGURATION_NOTIFICATION;
+    return 0;
+  }
+  if (handle == CMD_HANDLE) {
+    if (offset != 0 || size == 0 || size > 20) return ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LENGTH;
+    portENTER_CRITICAL(&rl_mux);
+    uint8_t next = (rl_qHead + 1) % rl_QN;
+    if (next != rl_qTail) {           // 가득 차면 가장 새 명령을 버린다
+      rl_queue[rl_qHead].len = size;
+      memcpy(rl_queue[rl_qHead].d, buffer, size);
+      rl_qHead = next;
+    }
+    portEXIT_CRITICAL(&rl_mux);
+    return 0;
+  }
+  return 0;
+}
+
+void rl_onPacket(uint8_t type, uint16_t, uint8_t* packet, uint16_t) {
+  if (type != HCI_EVENT_PACKET) return;
+  switch (hci_event_packet_get_type(packet)) {
+    case ATT_EVENT_CONNECTED:
+      rl_conHandle = att_event_connected_get_handle(packet);
+      rl_notifyOn = false;
+      rl_notifyPending = false;
+      rl_isConnected = true;
+      break;
+    case ATT_EVENT_DISCONNECTED:
+      if (att_event_disconnected_get_handle(packet) == rl_conHandle) {
+        rl_conHandle = HCI_CON_HANDLE_INVALID;
+        rl_isConnected = false;
+        rl_notifyOn = false;
+        rl_notifyPending = false;
+      }
+      break;
+    case ATT_EVENT_CAN_SEND_NOW: {
+      uint8_t tmp[20];
+      uint16_t n;
+      portENTER_CRITICAL(&rl_mux);
+      n = rl_statusLen;
+      memcpy(tmp, rl_statusBuf, n);
+      portEXIT_CRITICAL(&rl_mux);
+      if (rl_conHandle != HCI_CON_HANDLE_INVALID && rl_notifyOn && n) att_server_notify(rl_conHandle, STATUS_HANDLE, tmp, n);
+      rl_notifyPending = false;
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// BTstack 태스크에서 실행
+void rl_doInit(void*) {
+  att_server_init(profile_data, rl_onRead, rl_onWrite);
+  att_server_register_packet_handler(rl_onPacket);
+  bd_addr_t nullAddr = {0};
+  gap_advertisements_set_params(0x0030, 0x0060, 0 /* ADV_IND 연결 가능 */, 0, nullAddr, 0x07, 0x00);
+  gap_advertisements_set_data(rl_advLen, rl_advData);
+  gap_scan_response_set_data(rl_scanLen, rl_scanResp);
+  gap_advertisements_enable(1);
+}
+
+void rl_doNotify(void*) {
+  rl_notifyQueued = false;
+  if (rl_conHandle != HCI_CON_HANDLE_INVALID && rl_notifyOn) att_server_request_can_send_now_event(rl_conHandle);
+  else rl_notifyPending = false;
+}
+
+void rl_doDisconnect(void*) {
+  rl_discQueued = false;
+  if (rl_conHandle != HCI_CON_HANDLE_INVALID) gap_disconnect(rl_conHandle);
+}
+
+
+void rlBegin(const char* advName, const char* info) {
+  strncpy(rl_infoStr, info, sizeof(rl_infoStr) - 1);
+
+  // 광고: 플래그 + 이름 (Web Bluetooth에서 "RoboBlock"으로 시작하는 이름으로 찾는다)
+  size_t nameLen = strlen(advName);
+  if (nameLen > 26) nameLen = 26;
+  rl_advLen = 0;
+  rl_advData[rl_advLen++] = 2;  rl_advData[rl_advLen++] = BLUETOOTH_DATA_TYPE_FLAGS;  rl_advData[rl_advLen++] = 0x06;
+  rl_advData[rl_advLen++] = nameLen + 1;  rl_advData[rl_advLen++] = BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME;
+  memcpy(rl_advData + rl_advLen, advName, nameLen);  rl_advLen += nameLen;
+
+  // 스캔 응답: 128비트 서비스 UUID (리틀 엔디언)
+  static const uint8_t uuid[16] = {0x00, 0x0C, 0x1A, 0x0D, 0x7E, 0x2B, 0x6D, 0x9F,
+                                   0x2B, 0x4C, 0x3E, 0x5A, 0x00, 0x00, 0x1C, 0x7B};
+  rl_scanLen = 0;
+  rl_scanResp[rl_scanLen++] = 17;  rl_scanResp[rl_scanLen++] = BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS;
+  memcpy(rl_scanResp + rl_scanLen, uuid, 16);  rl_scanLen += 16;
+
+  rl_initReg.callback = rl_doInit;
+  btstack_run_loop_execute_on_main_thread(&rl_initReg);
+}
+
+bool rlConnected() { return rl_isConnected; }
+
+bool rlPopCommand(uint8_t* buf, uint8_t* len) {
+  bool ok = false;
+  portENTER_CRITICAL(&rl_mux);
+  if (rl_qTail != rl_qHead) {
+    *len = rl_queue[rl_qTail].len;
+    memcpy(buf, rl_queue[rl_qTail].d, *len);
+    rl_qTail = (rl_qTail + 1) % rl_QN;
+    ok = true;
+  }
+  portEXIT_CRITICAL(&rl_mux);
+  return ok;
+}
+
+void rlSendStatus(const uint8_t* data, uint8_t len) {
+  if (len > 20) len = 20;
+  portENTER_CRITICAL(&rl_mux);
+  memcpy(rl_statusBuf, data, len);
+  rl_statusLen = len;
+  portEXIT_CRITICAL(&rl_mux);
+  if (!rl_isConnected || !rl_notifyOn || rl_notifyPending || rl_notifyQueued) return;
+  rl_notifyPending = true;
+  rl_notifyQueued = true;
+  rl_notifyReg.callback = rl_doNotify;
+  btstack_run_loop_execute_on_main_thread(&rl_notifyReg);
+}
+
+void rlDisconnect() {
+  if (rl_discQueued) return;
+  rl_discQueued = true;
+  rl_discReg.callback = rl_doDisconnect;
+  btstack_run_loop_execute_on_main_thread(&rl_discReg);
+}
+
 
 // ===== 자가 진단 모드 =====
 // 1로 바꿔서 업로드하면 부팅 직후 4개 모터를 하나씩 정·역 회전시킵니다.
@@ -636,7 +915,7 @@ void sendWebStatus() {
   s[8] = statusSeq & 0xFF;  s[9] = statusSeq >> 8;  statusSeq++;
   uint32_t ms = millis();
   memcpy(s + 10, &ms, 4);
-  RoboLink::sendStatus(s, 14);
+  rlSendStatus(s, 14);
 }
 
 void startRoboLink() {
@@ -647,7 +926,7 @@ void startRoboLink() {
   snprintf(info, sizeof(info),
            "robot=soccer;fw=roboblock-soccer-0.1;name=%s;"
            "FL=32,33;FR=27,4;BL=25,26;BR=22,21;oled=16,17;boot=0", name);
-  RoboLink::begin(name, info);
+  rlBegin(name, info);
   Serial.printf("로보블록 웹 블루투스 이름: %s\n", name);
 }
 
@@ -718,13 +997,13 @@ void loop() {
   bool updated = BP32.update();
 
   // 모드 전환: 웹 에디터가 붙으면 블록 모드, 떨어지면 조종 모드
-  bool web = RoboLink::connected();
+  bool web = rlConnected();
   if (web && !webMode) enterWebMode();
   else if (!web && webMode) leaveWebMode();
 
   if (webMode) {
     uint8_t buf[20], n;
-    while (RoboLink::popCommand(buf, &n)) handleWebCommand(buf, n);
+    while (rlPopCommand(buf, &n)) handleWebCommand(buf, n);
     if (!webTimedOut && millis() - lastWebCmdMs > WEB_TIMEOUT_MS) {
       brakeAll();                // 명령이 끊기면 즉시 능동 제동
       webTimedOut = true;

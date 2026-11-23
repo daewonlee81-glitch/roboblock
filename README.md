@@ -50,7 +50,7 @@ ESP32 로봇을 블록으로 코딩하는 교육용 웹 에디터입니다. 블�
 | 상태 (알림 10 Hz) | `7b1c0002-…` | `A1 모드 플래그 FL FR BL BR 제동비트 순번(2) millis(4)` |
 | 정보 (읽기) | `7b1c0003-…` | `robot=soccer;fw=…;FL=32,33;FR=27,4;BL=25,26;BR=22,21;oled=16,17;boot=0` |
 
-GATT 표를 바꾸면 `roboblock.gatt`를 BTstack의 `tool/compile_gatt.py`로 다시 `roboblock_gatt.h`로 만듭니다.
+펌웨어는 `soccer_roboblock.ino` 한 파일로 완결됩니다. GATT 표를 바꾸면 `roboblock.gatt`를 BTstack의 `tool/compile_gatt.py`로 다시 만들어 .ino 안의 GATT 표 부분을 바꿉니다.
 
 이 단계에서 블록은 브라우저에서 실행되고 바퀴 명령만 로봇에 보냅니다. 로봇에 프로그램을 저장해 케이블·연결 없이 도는 바이트코드 인터프리터는 다음 단계입니다. "앞으로 2칸", "90° 돌기"는 시간으로 움직이므로 로봇마다 보정이 필요합니다.
 
@@ -79,7 +79,7 @@ Pages는 https로 서비스되므로, 나중에 크롬·엣지·안드로이드�
 | 파일 | 내용 |
 |---|---|
 | `index.html` | 에디터 전체 (HTML·CSS·JS 한 파일) |
-| `firmware/soccer_roboblock/` | 축구로봇 펌웨어 (Xbox 조종 + 로보블록 블루투스) |
+| `firmware/soccer_roboblock/` | 축구로봇 펌웨어 (Xbox 조종 + 로보블록 블루투스), `.ino` 한 파일 |
 | `.nojekyll` | GitHub Pages가 파일을 그대로 서비스하게 함 |
 
 학생이 만든 블록과 장치 구성은 각자의 브라우저(localStorage)에만 저장됩니다.
