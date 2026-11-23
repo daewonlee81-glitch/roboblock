@@ -9,6 +9,8 @@
  *               에디터에서 연결을 끊으면 다시 조종 모드로 돌아가 Xbox 컨트롤러가 재연결된다.
  *               블록 모드에서 BOOT 버튼을 짧게 누르면 블록의 "로봇 버튼을 누르면"이 실행된다.
  *   안전: 블록 모드에서 0.5초 동안 명령이 없으면(브라우저 닫힘·전파 끊김) 즉시 능동 제동.
+ *   OLED: 켜지면 PC 연결 상태(PC : waiting / PC:OK)와 웹 블루투스 이름(ID : RoboBlock-XXXX)을 보여 주고,
+ *         연결·해제되는 순간 2초 동안 PC LINKED / PC UNLINK를 크게 띄운다.
  *
  * 파일: soccer_roboblock.ino (이 파일), RoboLink.h/.cpp (BLE GATT 서버), roboblock_gatt.h (GATT 표)
  *   소프트웨어에서 좌/우 2채널로 묶어 제어 (스키드 스티어)
@@ -174,6 +176,8 @@ unsigned long lastWebCmdMs = 0;          // 마지막 웹 명령 시각 (안전 
 const unsigned long WEB_TIMEOUT_MS = 500;
 bool webTimedOut = false;
 char webText[19] = "";                   // 블록의 "화면에 표시" 내용 (ASCII)
+char robotName[24] = "RoboBlock";        // 웹 블루투스 이름 (OLED에도 표시)
+unsigned long pcBannerUntil = 0;         // PC 연결·해제 순간 큰 글씨 안내를 보여 줄 시각
 uint16_t statusSeq = 0;
 bool bootShortPress = false;             // BOOT 짧게 누름 (블록의 "로봇 버튼을 누르면")
 
@@ -309,6 +313,11 @@ void setupTFT() {
   oled.setTextSize(1);
   oled.setCursor(0, 28);
   oled.print("Booting...");
+  oled.setCursor(0, 42);
+  oled.print("ID: ");
+  oled.print(robotName);
+  oled.setCursor(0, 54);
+  oled.print("PC : waiting");
   oled.display();
   Serial.println("OLED 초기화 완료.");
 }
@@ -321,12 +330,24 @@ void updateTFT() {
 
   oled.clearDisplay();
 
-  // 타이틀
+  // 타이틀 (블록 모드면 BLOCK MODE)
   oled.setTextColor(SSD1306_WHITE);
   oled.setTextSize(2);
   oled.setCursor(4, 0);
-  oled.print("4WD ROBOT");
+  oled.print(webMode ? "BLOCK MODE" : "4WD ROBOT");
   oled.drawLine(0, 18, OLED_W - 1, 18, SSD1306_WHITE);
+
+  // PC(웹 에디터)와 연결·해제되는 순간 2초 동안 크게 안내
+  if (millis() < pcBannerUntil) {
+    oled.setTextSize(2);
+    oled.setCursor(webMode ? 16 : 10, 26);
+    oled.print(webMode ? "PC LINKED" : "PC UNLINK");
+    oled.setTextSize(1);
+    oled.setCursor(0, 50);
+    oled.print(webMode ? "Blocks only, pad off" : "Xbox pad mode");
+    oled.display();
+    return;
+  }
 
   // BOOT 버튼이 눌리고 있으면 카운트다운만 큼지막하게 표시하고 끝
   unsigned long btnHold = getBootHoldMs();
@@ -349,7 +370,7 @@ void updateTFT() {
 
   if (webMode) {                       // 블록 모드 화면
     oled.setCursor(0, 22);
-    oled.print("BLOCK MODE  WEB: OK");
+    oled.printf("PC:OK  %s", robotName);
     oled.setCursor(0, 32);
     oled.printf("FL%+4d  FR%+4d", motorPct[0], motorPct[1]);
     oled.setCursor(0, 42);
@@ -361,27 +382,24 @@ void updateTFT() {
     return;
   }
 
-  // BT 연결 상태
+  // PC(웹 에디터) 연결 상태 — 기다리는 중이면 점이 깜빡인다
   oled.setCursor(0, 22);
-  oled.print("BT : ");
-  oled.println(myCtl && myCtl->isConnected() ? "OK" : "--");
+  oled.print("PC : waiting");
+  if ((millis() / 500) % 2) oled.print("...");
 
-  // 페어링 MAC (끝 4바이트)
+  // 웹 블루투스 이름 (에디터 목록에서 이 이름을 고른다)
   oled.setCursor(0, 32);
-  if (hasPaired) {
-    oled.printf("MAC: %02X:%02X:%02X:%02X\n",
-      pairedMAC[2], pairedMAC[3], pairedMAC[4], pairedMAC[5]);
-  } else {
-    oled.println("MAC: --");
-  }
+  oled.printf("ID : %s", robotName);
 
-  // 속도
+  // Xbox 컨트롤러 연결 상태 + 페어링 MAC 끝 2바이트
   oled.setCursor(0, 42);
-  oled.printf("Spd: %3d%%\n", lastSpdPct);
+  oled.printf("PAD: %s", myCtl && myCtl->isConnected() ? "OK" : "--");
+  if (hasPaired) oled.printf("  MAC %02X:%02X", pairedMAC[4], pairedMAC[5]);
+  else oled.print("  MAC --");
 
-  // 방향
+  // 속도·방향
   oled.setCursor(0, 52);
-  oled.printf("Dir: %s\n", lastDirLabel);
+  oled.printf("Spd:%3d%%  Dir:%s", lastSpdPct, lastDirLabel);
 
   oled.display();
 }
@@ -529,6 +547,7 @@ void handleInput(ControllerPtr ctl) {
 
 void enterWebMode() {
   webMode = true;
+  pcBannerUntil = millis() + 2000;
   brakeAll();
   BP32.enableNewBluetoothConnections(false);   // 새 컨트롤러 연결 막기
   if (myCtl) myCtl->disconnect();              // 연결된 컨트롤러 끊기
@@ -540,6 +559,7 @@ void enterWebMode() {
 
 void leaveWebMode() {
   webMode = false;
+  pcBannerUntil = millis() + 2000;
   brakeAll();
   BP32.enableNewBluetoothConnections(true);    // 컨트롤러 다시 받기
   Serial.println("웹 에디터 연결 해제 → 조종 모드 (Xbox 컨트롤러를 켜세요)");
@@ -621,8 +641,8 @@ void sendWebStatus() {
 
 void startRoboLink() {
   uint64_t mac = ESP.getEfuseMac();
-  char name[24];
-  snprintf(name, sizeof(name), "RoboBlock-%02X%02X", (uint8_t)(mac >> 32), (uint8_t)(mac >> 40));
+  char* name = robotName;
+  snprintf(robotName, sizeof(robotName), "RoboBlock-%02X%02X", (uint8_t)(mac >> 32), (uint8_t)(mac >> 40));
   char info[200];
   snprintf(info, sizeof(info),
            "robot=soccer;fw=roboblock-soccer-0.1;name=%s;"
