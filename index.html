@@ -81,6 +81,8 @@ dialog.about::backdrop{background:rgba(10,14,20,.55)}
 .btn.run{background:var(--run);border-color:var(--run);color:var(--on-run)}
 .btn.stop{background:var(--stop);border-color:var(--stop);color:var(--on-stop)}
 .btn.sm{padding:3px 9px;font-size:12px}
+.btn.unlink{border-color:var(--stop);color:var(--stop)}
+.btn.unlink:hover{background:var(--stop);color:var(--on-stop)}
 .btn.linked{background:var(--pill-run);border-color:var(--run);color:var(--pill-run-ink)}
 .note p + p, .note p + .row, .note .row + p{margin-top:8px}
 .warn-t{color:var(--stop)}
@@ -227,6 +229,7 @@ select.warn{border-color:var(--accent)}
       <button type="button" class="btn run" id="runBtn">▶ 실행</button>
       <button type="button" class="btn stop" id="stopBtn" disabled>■ 정지</button>
       <button type="button" class="btn" id="connectBtn">로봇 연결</button>
+      <button type="button" class="btn unlink" id="disconnectBtn" hidden title="로봇과 PC의 블루투스 연결을 끊습니다. 로봇은 조종 모드로 돌아가 Xbox 컨트롤러를 받습니다.">⏏ 연결 끊기</button>
     </div>
   </header>
 
@@ -2056,6 +2059,7 @@ function renderLinkUi(note){
   const btn = $('#connectBtn'), name = link.device && link.device.name;
   btn.textContent = link.on ? `● ${name || '로봇'}` : link.connecting ? '연결 중…' : '로봇 연결';
   btn.classList.toggle('linked', link.on);
+  $('#disconnectBtn').hidden = !link.on;
   $('#wireTitle').textContent = 'ESP32 배선과 신호 · ' + ROBOTS[robotKey].label + (link.on ? ` · 실제 로봇 ${name || ''}` : ' · 화면 미리보기');
   const body = $('#connectBody');
   if (!body) return;
@@ -2126,6 +2130,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#wireCa
 $('#mtSpeed').addEventListener('input', () => { $('#mtSpeedV').textContent = $('#mtSpeed').value + '%'; });
 $('#mtStop').addEventListener('click', () => { if (run) endRun('정지했습니다.', ''); stopWheelTest('모두 정지했습니다.'); stopDrive(); });
 $('#mtApply').addEventListener('click', applyPinsToRobot);
+$('#disconnectBtn').addEventListener('click', linkDisconnect);
 $('#connectBtn').addEventListener('click', () => { $('#connectCard').hidden = false; renderLinkUi(); if (!link.on && !link.connecting && linkSupported()) linkConnect(); });
 $('#connectClose').addEventListener('click', () => { $('#connectCard').hidden = true; });
 $('#copyBtn').addEventListener('click', () => {
@@ -2267,7 +2272,7 @@ setWireFit(store.get('rb.wireFit', true) !== false);
 applySplit();
 
 /* ───────────── 정보 · 개발자 · 버그 신고 ───────────── */
-const APP_VERSION = '0.10';
+const APP_VERSION = '0.11';
 const BUG_URL = 'https://github.com/daewonlee81-glitch/roboblock/issues/new';
 const diagErrors = [];
 window.addEventListener('error', e => { diagErrors.push(String(e.message || e.error || e).slice(0, 200)); if (diagErrors.length > 5) diagErrors.shift(); });
