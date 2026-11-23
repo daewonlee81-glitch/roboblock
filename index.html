@@ -406,6 +406,10 @@ const pinOpts = list => list.map(p => ['GPIO ' + p, String(p)]);
 const OUT_PIN_OPTS = pinOpts(ESP32_PINS.filter(p => !FLASH.includes(p) && !INPUT_ONLY.includes(p)));
 const IN_PIN_OPTS = pinOpts(ESP32_PINS.filter(p => !FLASH.includes(p)));
 const ADC_PIN_OPTS = pinOpts(ADC1);
+// 키보드 키 (e.code 값 — 한글 입력 상태에서도 같은 키로 인식된다)
+const KEY_OPTS = [['↑ 위쪽 화살표','ArrowUp'],['↓ 아래쪽 화살표','ArrowDown'],['← 왼쪽 화살표','ArrowLeft'],['→ 오른쪽 화살표','ArrowRight'],['스페이스','Space'],['엔터','Enter'],
+  ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(c => [c, 'Key' + c]), ...'0123456789'.split('').map(c => [c, 'Digit' + c])];
+const KEY_LABEL = Object.fromEntries(KEY_OPTS.map(([l, v]) => [v, l.replace(/ .*$/, '')]));
 const PAD_BTNS = [['A','A'],['B','B'],['X','X'],['Y','Y'],['LB','LB'],['RB','RB'],['↑','UP'],['↓','DOWN'],['←','LEFT'],['→','RIGHT'],['보기','VIEW'],['메뉴','MENU']];
 
 /* ───────────── 장치 (확장 가능) ───────────── */
@@ -503,6 +507,8 @@ const BLOCKS = [
   // 이벤트
   {cat:'event', level:1, robots:'all', json:{type:'rb_start', message0:'▶ 시작하면', nextStatement:null, style:'event_blocks', tooltip:'실행 버튼을 누르면 시작합니다.'}},
   {cat:'event', level:2, robots:'all', json:{type:'rb_button', message0:'로봇 버튼을 누르면', nextStatement:null, style:'event_blocks'}},
+  {cat:'event', level:1, robots:'all', json:{type:'rb_key', message0:'⌨ %1 키를 누르면', args0:[{type:'field_dropdown', name:'KEY', options:KEY_OPTS}], nextStatement:null, style:'event_blocks', tooltip:'실행 중에 키보드의 이 키를 누르면 아래 블록이 실행됩니다. 실제 로봇과 연결되어 있으면 로봇이 움직입니다.'}},
+  {cat:'event', level:2, robots:'all', json:{type:'rb_key_up', message0:'⌨ %1 키를 떼면', args0:[{type:'field_dropdown', name:'KEY', options:KEY_OPTS}], nextStatement:null, style:'event_blocks', tooltip:'누르고 있던 키를 떼면 아래 블록이 실행됩니다. "누르면 달리기 + 떼면 멈추기"로 키보드 조종을 만들 수 있습니다.'}},
   {cat:'event', level:2, robots:['soccer','middle'], json:{type:'rb_pad', message0:'Xbox %1 를 누르면', args0:[{type:'field_dropdown', name:'PAD', options:PAD_BTNS}], nextStatement:null, style:'event_blocks', tooltip:'조종 중 이 버튼을 누르면 아래 블록이 실행됩니다 (매크로).'}},
   // 움직임
   {cat:'move', level:1, robots:'all', json:{type:'rb_move_cells', message0:'%1 %2 칸', args0:[{type:'field_dropdown', name:'DIR', options:[['앞으로 ↑','F'],['뒤로 ↓','B']]},{type:'input_value', name:'N', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{N:2}},
@@ -535,6 +541,7 @@ const BLOCKS = [
   {cat:'sensor', level:2, robots:['sumo'], json:{type:'rb_see', message0:'상대가 보이나?', output:'Boolean', style:'sensor_blocks'}},
   {cat:'sensor', level:2, robots:['soccer'], json:{type:'rb_ball_dir', message0:'공 방향 (°)', output:'Number', style:'sensor_blocks'}},
   {cat:'sensor', level:2, robots:['soccer'], json:{type:'rb_ball_str', message0:'공 세기', output:'Number', style:'sensor_blocks'}},
+  {cat:'sensor', level:2, robots:'all', json:{type:'rb_key_pressed', message0:'⌨ %1 키가 눌렸나?', args0:[{type:'field_dropdown', name:'KEY', options:KEY_OPTS}], output:'Boolean', style:'sensor_blocks', tooltip:'지금 그 키를 누르고 있으면 참'}},
   {cat:'sensor', level:2, robots:'all', json:{type:'rb_timer', message0:'타이머 (초)', output:'Number', style:'sensor_blocks'}},
   {cat:'sensor', level:2, robots:'all', json:{type:'rb_timer_reset', message0:'타이머 초기화', previousStatement:null, nextStatement:null, style:'sensor_blocks'}},
   // Xbox 컨트롤러 (Bluepad32)
@@ -1504,6 +1511,7 @@ async function evalExpr(b){
     case 'rb_pad_pressed': return pad.btn.has(b.getFieldValue('BTN'));
     case 'rb_pad_axis': return pad[b.getFieldValue('AXIS')] || 0;
     case 'rb_pad_connected': return pad.connected;
+    case 'rb_key_pressed': return keysDown.has(b.getFieldValue('KEY'));
     case 'rb_sensor_val': { const d = devOrMsg(b); return d ? sensorValue(d) : 0; }
     case 'rb_enc_read': { const d = devOrMsg(b); if (!d) return 0; const s = R(d); return b.getFieldValue('WHAT') === 'RPM' ? Math.round(s.rpm) : Math.round(s.count); }
     case 'rb_dread': {
@@ -1597,7 +1605,7 @@ async function execStmt(b){
     default: break;
   }
 }
-function hatsOf(type, padBtn){ return ws.getTopBlocks(true).filter(b => b.type === type && (!padBtn || b.getFieldValue('PAD') === padBtn)); }
+function hatsOf(type, padBtn){ return ws.getTopBlocks(true).filter(b => b.type === type && (!padBtn || (b.getFieldValue('PAD') || b.getFieldValue('KEY')) === padBtn)); }
 async function runTask(hat){
   if (run.tasks.has(hat.id)) return;
   run.tasks.add(hat.id);
@@ -1608,6 +1616,7 @@ async function runTask(hat){
 async function startRun(){
   if (run) return;
   stopWheelTest('');
+  if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();   // 스페이스·엔터 키가 버튼을 누르지 않게
   saveWorkspace();
   const types = new Set(ws.getAllBlocks(false).map(b => b.type));
   run = {stopped:false, tasks:new Set(), vars:new Map(), frames:[], manual:false, padOwned:['rb_pad_pressed','rb_pad_axis','rb_pad_connected'].some(t => types.has(t))};
@@ -1621,11 +1630,11 @@ async function startRun(){
   countdown = 0; t0 = performance.now();
   setStatus('실행 중', 'run'); setMsg('');
   const starts = hatsOf('rb_start');
-  const waiting = hatsOf('rb_button').length + hatsOf('rb_pad').length > 0;
+  const waiting = hatsOf('rb_button').length + hatsOf('rb_pad').length + hatsOf('rb_key').length + hatsOf('rb_key_up').length > 0;
   if (!starts.length && !waiting){ endRun('"▶ 시작하면" 블록이 없습니다. 이벤트에서 끌어오세요.', 'err'); return; }
   await Promise.all(starts.map(runTask));
   if (run && !run.stopped){
-    if (waiting){ setStatus('버튼 기다리는 중', 'wait'); stopDrive(); }
+    if (waiting){ setStatus(hatsOf('rb_key').length + hatsOf('rb_key_up').length ? '키·버튼 기다리는 중' : '버튼 기다리는 중', 'wait'); stopDrive(); }
     else endRun('프로그램이 끝났습니다.', '');
   }
 }
@@ -1721,6 +1730,7 @@ function genCpp(){
       case 'rb_pad_pressed': return `rb.pad.pressed(BTN_${b.getFieldValue('BTN')})`;
       case 'rb_pad_axis': return `rb.pad.axis(AXIS_${b.getFieldValue('AXIS')})`;
       case 'rb_pad_connected': return 'rb.pad.connected()';
+      case 'rb_key_pressed': return `rb.keyPressed(KEY_${b.getFieldValue('KEY').replace(/^(Key|Digit)/, '').toUpperCase()})`;
       case 'rb_sensor_val': return `rb.sensor(${devName(b)}).read()`;
       case 'rb_enc_read': return `rb.encoder(${devName(b)}).${b.getFieldValue('WHAT') === 'RPM' ? 'rpm' : 'count'}()`;
       case 'rb_dread': return `digitalRead(${b.getFieldValue('PIN')})`;
@@ -1792,9 +1802,15 @@ function genCpp(){
   tops.filter(t => t.type === 'rb_start').forEach((b, i) => handlers.push(['onStart' + (i ? i + 1 : ''), b, 'rb.onStart(']));
   tops.filter(t => t.type === 'rb_button').forEach((b, i) => handlers.push(['onButton' + (i ? i + 1 : ''), b, 'rb.onButton(']));
   tops.filter(t => t.type === 'rb_pad').forEach((b, i) => handlers.push(['onPad' + b.getFieldValue('PAD') + (i ? i + 1 : ''), b, `rb.onPad(BTN_${b.getFieldValue('PAD')}, `]));
+  const keyName = b => b.getFieldValue('KEY').replace(/^(Key|Digit)/, '').toUpperCase();
+  const seen = {};
+  const uniq = nm => { seen[nm] = (seen[nm] || 0) + 1; return seen[nm] > 1 ? nm + seen[nm] : nm; };
+  tops.filter(t => t.type === 'rb_key').forEach(b => handlers.push([uniq('onKey' + keyName(b).replace(/^ARROW/, '')), b, `rb.onKey(KEY_${keyName(b)}, `]));
+  tops.filter(t => t.type === 'rb_key_up').forEach(b => handlers.push([uniq('onKeyUp' + keyName(b).replace(/^ARROW/, '')), b, `rb.onKeyUp(KEY_${keyName(b)}, `]));
   for (const [fn, b] of handlers) out += `\nvoid ${fn}() {\n${S(b.getNextBlock(), 1)}}\n`;
   out += `\nvoid setup() {\n  // 장치와 핀 (에디터의 배선도에서 지정, 실제 로봇은 NVS에도 저장)\n${deviceSetupLines()}  rb.begin();   // Bluepad32 시작, Xbox 컨트롤러 페어링 유지\n`;
   for (const pp of new Set(ws.getAllBlocks(false).filter(x => x.type === 'rb_dwrite').map(x => x.getFieldValue('PIN')))) out += `  pinMode(${pp}, OUTPUT);\n`;
+  if (handlers.some(h => /^onKey/.test(h[0]))) out += `  // 키보드 이벤트는 웹 에디터(PC)와 연결되어 있을 때 에디터가 로봇에 전달한다\n`;
   for (const [fn, , reg] of handlers) out += `  ${reg}${fn});\n`;
   out += `}\n\nvoid loop() {\n  rb.update();   // VM, Bluepad32, 센서, 모니터 전송(10 Hz)\n}\n`;
   return out;
@@ -2138,6 +2154,45 @@ window.addEventListener('resize', () => Blockly.svgResize(ws));
 if (window.ResizeObserver) new ResizeObserver(() => Blockly.svgResize(ws)).observe(document.querySelector('.ws'));
 
 
+
+/* ───────────── 키보드 이벤트 ─────────────
+   실행 중에 키를 누르면 "⌨ 키를 누르면" 블록이, 떼면 "⌨ 키를 떼면" 블록이 실행된다.
+   글자를 입력하는 칸(블록의 숫자·글자 칸, 장치 이름, 버그 신고 등)에 커서가 있을 때는 무시한다. */
+const keysDown = new Set();
+function typingTarget(t){
+  if (!t || t === document.body) return false;
+  if (t.isContentEditable) return true;
+  const tag = t.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag === 'INPUT' && !/^(range|checkbox|radio|button)$/.test(t.type)) return true;
+  return !!(t.closest && t.closest('.blocklyWidgetDiv, .blocklyDropDownDiv, dialog[open]'));
+}
+let keyHintAt = 0;
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey || typingTarget(e.target)) return;
+  const code = e.code;
+  const handled = hatsOf('rb_key', code).length + hatsOf('rb_key_up', code).length > 0 || ws.getAllBlocks(false).some(b => b.type === 'rb_key_pressed' && b.getFieldValue('KEY') === code);
+  if (!handled) return;
+  if (run) e.preventDefault();               // 실행 중에는 화살표·스페이스가 화면을 스크롤하지 않게
+  keysDown.add(code);
+  if (e.repeat) return;                      // 꾹 누를 때 반복 입력은 무시
+  if (!run || countdown > 0){
+    if (performance.now() - keyHintAt > 1500){ keyHintAt = performance.now(); setMsg(`${KEY_LABEL[code] || code} 키 블록이 있습니다. 먼저 실행을 누르세요.`); }
+    return;
+  }
+  const hats = hatsOf('rb_key', code);
+  if (hats.length){ setStatus('실행 중', 'run'); hats.forEach(h => runTask(h)); }
+});
+document.addEventListener('keyup', e => {
+  const code = e.code;
+  if (!keysDown.has(code)) return;
+  keysDown.delete(code);
+  if (run) e.preventDefault();
+  if (!run || countdown > 0) return;
+  const hats = hatsOf('rb_key_up', code);
+  if (hats.length){ setStatus('실행 중', 'run'); hats.forEach(h => runTask(h)); }
+});
+window.addEventListener('blur', () => keysDown.clear());
 /* ───────────── 창 크기 조절 (블록 창 ↔ 오른쪽 창) ─────────────
    가운데 막대를 끌면 넓이가 바뀐다. 폰처럼 위아래로 쌓인 화면에서는 블록 창의 높이가 바뀐다.
    키보드 ←→(↑↓)로도 움직이고, 두 번 누르면 원래대로. */
@@ -2212,7 +2267,7 @@ setWireFit(store.get('rb.wireFit', true) !== false);
 applySplit();
 
 /* ───────────── 정보 · 개발자 · 버그 신고 ───────────── */
-const APP_VERSION = '0.9';
+const APP_VERSION = '0.10';
 const BUG_URL = 'https://github.com/daewonlee81-glitch/roboblock/issues/new';
 const diagErrors = [];
 window.addEventListener('error', e => { diagErrors.push(String(e.message || e.error || e).slice(0, 200)); if (diagErrors.length > 5) diagErrors.shift(); });
