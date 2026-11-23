@@ -58,6 +58,9 @@ body{background:var(--bg);color:var(--ink);font-family:var(--font-ui);font-size:
 .btn.run{background:var(--run);border-color:var(--run);color:var(--on-run)}
 .btn.stop{background:var(--stop);border-color:var(--stop);color:var(--on-stop)}
 .btn.sm{padding:3px 9px;font-size:12px}
+.btn.linked{background:var(--pill-run);border-color:var(--run);color:var(--pill-run-ink)}
+.note p + p, .note p + .row, .note .row + p{margin-top:8px}
+.warn-t{color:var(--stop)}
 .layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(320px,.85fr) minmax(0,1.5fr);gap:12px}
 .ws{position:relative;min-height:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--ws-bg)}
 #blocklyDiv{position:absolute;inset:0}
@@ -196,7 +199,7 @@ select.warn{border-color:var(--accent)}
     <aside class="side">
       <div class="card" id="connectCard" hidden>
         <div class="head"><h2>로봇 연결</h2><button type="button" class="btn sm" id="connectClose">닫기</button></div>
-        <div class="note"><p>이 프로토타입은 ESP32 핀에 나갈 신호를 화면에서 보여줍니다. 펌웨어(기획서의 0단계)가 준비되면 크롬북·윈도우·안드로이드는 블루투스로, iPad는 로봇 Wi-Fi로 연결하고, 같은 화면에 실제 로봇의 신호가 들어옵니다.</p></div>
+        <div class="note" id="connectBody"></div>
       </div>
 
       <div class="card" id="wireCard">
@@ -722,9 +725,9 @@ function sigOf(d, role){
         const hz = Math.round(Math.abs(s.rpm)/60*DEVICE_TYPES.encmotor.cpr/4);
         return hz ? {mode:'pulse', active:true, text:`${hz} Hz`, speed:0.35} : {mode:'low', text:'대기'};
       }
-      if (s.brake) return {mode:'high', active:true, text:'HIGH (제동)'};
-      const mine = role === 'IN1' ? s.cmd > 0 : s.cmd < 0;
-      return mine ? {mode:'pwm', active:true, text:`PWM ${Math.abs(s.cmd)}%`, speed: 2.1 - Math.abs(s.cmd)/100*1.7} : {mode:'low', text:'LOW'};
+      if (M(d).brake) return {mode:'high', active:true, text:'HIGH (제동)'};
+      const mine = role === 'IN1' ? M(d).cmd > 0 : M(d).cmd < 0;
+      return mine ? {mode:'pwm', active:true, text:`PWM ${Math.abs(M(d).cmd)}%`, speed: 2.1 - Math.abs(M(d).cmd)/100*1.7} : {mode:'low', text:'LOW'};
     }
     case 'stepper': {
       const moving = Math.abs(s.goal - s.pos) >= 1;
@@ -747,8 +750,8 @@ function sigOf(d, role){
 function cardValue(d){
   const s = R(d), T = DEVICE_TYPES[d.type];
   switch (d.type){
-    case 'drv8871': return s.brake ? '제동' : (s.cmd ? `${s.cmd > 0 ? '+' : ''}${s.cmd}%` : '정지');
-    case 'encmotor': return (s.brake ? '제동' : (s.cmd ? `${s.cmd > 0 ? '+' : ''}${s.cmd}%` : '정지')) + ` · ${Math.round(s.rpm)} rpm`;
+    case 'drv8871': return M(d).brake ? '제동' : (M(d).cmd ? `${M(d).cmd > 0 ? '+' : ''}${M(d).cmd}%` : '정지');
+    case 'encmotor': return (M(d).brake ? '제동' : (M(d).cmd ? `${M(d).cmd > 0 ? '+' : ''}${M(d).cmd}%` : '정지')) + ` · ${Math.round(s.rpm)} rpm`;
     case 'stepper': return `${Math.round(s.pos)} 스텝`;
     case 'servo': return s.us != null ? `${Math.round(s.us)} µs` : '—';
     case 'pcaservo': return `${Math.round(s.deg)}° · ${servoUs(d)} µs`;
@@ -765,7 +768,7 @@ function cardValue(d){
 function numValue(d){
   const s = R(d);
   switch (d.type){
-    case 'drv8871': return s.cmd;
+    case 'drv8871': return M(d).cmd;
     case 'encmotor': return s.rpm;
     case 'stepper': return s.pos;
     case 'servo': return s.us == null ? 0 : s.us;
@@ -804,7 +807,7 @@ function drvInfo(d){
 function loadValue(d){
   const s = R(d);
   switch (d.type){
-    case 'drv8871': case 'encmotor': { const t = s.brake ? '제동' : s.cmd > 0 ? `정회전 ${s.cmd}%` : s.cmd < 0 ? `역회전 ${-s.cmd}%` : '정지'; return d.type === 'encmotor' ? t + ` · ${Math.round(s.rpm)}rpm` : t; }
+    case 'drv8871': case 'encmotor': { const t = M(d).brake ? '제동' : M(d).cmd > 0 ? `정회전 ${M(d).cmd}%` : M(d).cmd < 0 ? `역회전 ${-M(d).cmd}%` : '정지'; return d.type === 'encmotor' ? t + ` · ${Math.round(s.rpm)}rpm` : t; }
     case 'stepper': return `${Math.round(s.pos)} 스텝`;
     case 'mosfet': return s.on ? '켜짐' : '꺼짐';
     case 'pcaservo': return `${Math.round(s.deg)}°`;
@@ -1030,9 +1033,9 @@ function updateSignals(){
     const lv = document.getElementById('lv-' + id); if (lv) lv.textContent = loadValue(d);
     const mr = document.getElementById('mr-' + id);
     if (d.type === 'drv8871' || d.type === 'encmotor'){
-      const run_ = !s.brake && s.cmd !== 0, dur = 2.1 - Math.abs(s.cmd)/100*1.7;
-      for (let i = 0; i < 2; i++) setWa(document.getElementById(`wo-${id}-${i}`), run_ || s.brake, run_, dur, s.cmd < 0);
-      if (mr){ mr.setAttribute('class', 'rot' + (run_ ? ' spin' : '')); mr.style.animationDuration = (0.25 + (100 - Math.abs(s.cmd))/100*1.2).toFixed(2) + 's'; mr.style.animationDirection = s.cmd < 0 ? 'reverse' : 'normal'; }
+      const run_ = !M(d).brake && M(d).cmd !== 0, dur = 2.1 - Math.abs(M(d).cmd)/100*1.7;
+      for (let i = 0; i < 2; i++) setWa(document.getElementById(`wo-${id}-${i}`), run_ || M(d).brake, run_, dur, M(d).cmd < 0);
+      if (mr){ mr.setAttribute('class', 'rot' + (run_ ? ' spin' : '')); mr.style.animationDuration = (0.25 + (100 - Math.abs(M(d).cmd))/100*1.2).toFixed(2) + 's'; mr.style.animationDirection = M(d).cmd < 0 ? 'reverse' : 'normal'; }
     } else if (d.type === 'stepper'){
       const moving = Math.abs(s.goal - s.pos) >= 1;
       for (let i = 0; i < 4; i++) setWa(document.getElementById(`wo-${id}-${i}`), moving || s.en, moving, 0.4, s.goal < s.pos);
@@ -1281,7 +1284,7 @@ function bindStick(el){
 
 /* ───────────── 장치 시간 진행 ───────────── */
 function tick(dt, now){
-  if (robotKey !== 'sumo' && manualActive() && countdown <= 0) manualDrive(dt);
+  if (robotKey !== 'sumo' && manualActive() && countdown <= 0 && !link.on) manualDrive(dt);   // 로봇 연결 중에는 블록으로만 움직인다
   for (const d of devices){
     const s = R(d);
     if (d.type === 'servo' && s.target != null){
@@ -1308,6 +1311,7 @@ let lastT = performance.now(), lastUi = 0;
 function loop(now){
   const dt = Math.min(0.05, (now - lastT)/1000); lastT = now;
   tick(dt, now);
+  linkPump(now);
   if (now - lastUi >= 80){ lastUi = now; updateSignals(); updateMonitor(now); updatePanels(); }
   requestAnimationFrame(loop);
 }
@@ -1335,6 +1339,7 @@ function updatePanels(){
   else if (run.padOwned){ pmode = '프로그램이 컨트롤러를 읽는 중'; kind = 'run'; tip = '컨트롤러 입력은 블록의 "Xbox … 값 / 눌렸나?"로 들어갑니다.'; }
   else if (run.manual){ pmode = '블록 + 기본 조종'; kind = 'run'; tip = '"기본 조종 켜기" 상태라 프로그램이 도는 동안에도 직접 몰 수 있습니다.'; }
   else { pmode = '블록 실행 중'; kind = 'wait'; tip = '스틱이나 방향키를 움직이면 프로그램이 멈춥니다. 매크로가 걸린 버튼은 그 블록을 실행합니다.'; }
+  if (link.on){ pmode = '블록 모드 (Xbox 끊김)'; kind = 'wait'; tip = '로봇이 웹 에디터와 연결되어 있어 Xbox 컨트롤러는 끊겨 있습니다. 컨트롤러로 몰려면 로봇 연결을 끊으세요. 이 화면의 가상 컨트롤러는 블록의 Xbox 값으로만 쓰입니다.'; }
   if (pm.textContent !== pmode){ pm.textContent = pmode; pm.className = 'pill' + (kind ? ' ' + kind : ''); }
   if (help.textContent !== tip) help.textContent = tip;
 }
@@ -1464,7 +1469,7 @@ async function execStmt(b){
     case 'rb_enc_reset': { const d = devOrMsg(b); if (d) R(d).count = 0; break; }
     case 'rb_timer_reset': t0 = performance.now(); break;
     case 'rb_beep': { const bz = devices.find(d => d.type === 'buzzer'); if (bz) R(bz).until = performance.now() + 150; setMsg(bz ? '부저: 삑' : '삑 (부저 장치가 없어 화면 표시만)'); await sleep(150); break; }
-    case 'rb_show': { const v = await val(b, 'TEXT', ''); oledText = String(typeof v === 'number' ? Math.round(v*10)/10 : v); const o = devices.find(d => d.type === 'oled'); if (o) R(o).flash = performance.now() + 200; await frame(); break; }
+    case 'rb_show': { const v = await val(b, 'TEXT', ''); oledText = String(typeof v === 'number' ? Math.round(v*10)/10 : v); linkQueue([0x04, ...new TextEncoder().encode(asciiText(oledText))]); const o = devices.find(d => d.type === 'oled'); if (o) R(o).flash = performance.now() + 200; await frame(); break; }
     case 'rb_wait': await sleep(posNum(await val(b, 'SEC', 1), 600)*1000); break;
     case 'rb_wait_until': while (!(await val(b, 'COND', false))) await frame(); break;
     case 'rb_end': throw new End();
@@ -1486,7 +1491,7 @@ async function execStmt(b){
     case 'procedures_callnoreturn': await callProc(b); break;
     case 'rb_pad_rumble': { const sec = posNum(await val(b, 'SEC', 0.3), 5), c = $('#padCard'); c.classList.add('rumble'); setTimeout(() => c.classList.remove('rumble'), sec*1000); await frame(); break; }
     case 'rb_manual': run.manual = b.getFieldValue('MODE') === 'ON'; if (!run.manual) stopDrive(); await frame(); break;
-    case 'rb_dwrite': { const p = Number(b.getFieldValue('PIN')); if (!guardPin(p)){ pinBlockSig.set(p, {mode: b.getFieldValue('VAL') === '1' ? 'high' : 'low'}); } await frame(); break; }
+    case 'rb_dwrite': { const p = Number(b.getFieldValue('PIN')); if (!guardPin(p)){ pinBlockSig.set(p, {mode: b.getFieldValue('VAL') === '1' ? 'high' : 'low'}); linkQueue([0x05, p, b.getFieldValue('VAL') === '1' ? 1 : 0]); } await frame(); break; }
     case 'rb_servo_pin': { const p = Number(b.getFieldValue('PIN')); const deg = Math.max(0, Math.min(180, Number(await val(b, 'DEG', 90)) || 0)); if (!guardPin(p)) pinBlockSig.set(p, {mode:'pwm', text:`${Math.round(500 + deg/180*2000)} µs`}); await frame(); break; }
     case 'rb_pwm_pin': { const p = Number(b.getFieldValue('PIN')); const duty = Math.max(0, Math.min(100, Number(await val(b, 'DUTY', 50)) || 0)); if (!guardPin(p)) pinBlockSig.set(p, {mode:'pwm', text:`${Math.round(duty)}%`}); await frame(); break; }
     case 'rb_pin_mode': { const p = Number(b.getFieldValue('PIN')); if (!guardPin(p)) pinBlockSig.set(p, {mode: b.getFieldValue('MODE') === 'INPUT_PULLUP' ? 'high' : 'low'}); break; }
@@ -1706,17 +1711,154 @@ function refreshCode(){
   }catch(e){ $('#cppOut').textContent = '// 코드를 만들지 못했습니다: ' + e.message; }
 }
 
+/* ───────────── 실제 로봇 연결 (Web Bluetooth) ─────────────
+   로봇 펌웨어의 RoboLink(BLE GATT)와 통신한다. 연결되면 로봇은 블록 모드가 되어
+   Xbox 컨트롤러를 끊고, 이 페이지가 보내는 명령으로만 움직인다.
+   명령: 0x01 FL FR BL BR(int8 %, 0=제동) · 0x02 제동 · 0x04 OLED 글자 · 0x05 핀 값
+   상태: 0xA1 모드 플래그 FL FR BL BR 제동비트 … (10 Hz) */
+const RB_SVC = '7b1c0000-5a3e-4c2b-9f6d-2b7e0d1a0c00';
+const RB_CMD = '7b1c0001-5a3e-4c2b-9f6d-2b7e0d1a0c00';
+const RB_STATUS = '7b1c0002-5a3e-4c2b-9f6d-2b7e0d1a0c00';
+const RB_INFO = '7b1c0003-5a3e-4c2b-9f6d-2b7e0d1a0c00';
+const POS4 = ['FL','FR','BL','BR'];
+const link = {on:false, connecting:false, device:null, cmd:null, busy:false, real:{}, info:{}, flags:0, lastStatus:0, lastSent:'', lastSentAt:0, queue:[], stale:false};
+function M(d){ return link.on && d.pos && link.real[d.pos] ? link.real[d.pos] : R(d); }
+function parseInfo(txt){ const o = {}; for (const kv of txt.split(';')){ const i = kv.indexOf('='); if (i > 0) o[kv.slice(0, i).trim()] = kv.slice(i + 1).trim(); } return o; }
+function linkSupported(){ return !!(navigator.bluetooth && navigator.bluetooth.requestDevice); }
+function asciiText(t){ return String(t).replace(/[^\x20-\x7E]/g, '?').slice(0, 18); }
+function linkQueue(bytes){ if (link.on) link.queue.push(Uint8Array.from(bytes)); }
+function wheelPacket(){
+  const p = [0x01];
+  for (const pos of POS4){ const d = driveMotors().find(m => m.pos === pos); const s = d ? R(d) : null; p.push(s && !s.brake ? (s.cmd & 0xFF) : 0); }
+  return Uint8Array.from(p);
+}
+async function linkWrite(bytes){
+  const c = link.cmd;
+  if (c.writeValueWithoutResponse) await c.writeValueWithoutResponse(bytes); else await c.writeValue(bytes);
+}
+function linkPump(now){
+  if (!link.on || link.busy) return;
+  let pkt = null;
+  if (link.queue.length) pkt = link.queue.shift();
+  else {
+    const w = wheelPacket(), key = w.join(',');
+    if (key !== link.lastSent || now - link.lastSentAt > 120){ pkt = w; link.lastSent = key; }   // 바뀌면 바로, 아니면 살아 있음 신호
+  }
+  if (!pkt) return;
+  link.busy = true; link.lastSentAt = now;
+  linkWrite(pkt).catch(() => {}).finally(() => { link.busy = false; });
+  const stale = now - link.lastStatus > 1500;
+  if (stale !== link.stale){ link.stale = stale; renderLinkUi(); }
+}
+function onStatus(dv){
+  if (dv.byteLength < 8 || dv.getUint8(0) !== 0xA1) return;
+  const flags = dv.getUint8(2), bm = dv.getUint8(7);
+  POS4.forEach((pos, i) => { link.real[pos] = {cmd: dv.getInt8(3 + i), brake: !!(bm & (1 << i))}; });
+  const was = link.flags; link.flags = flags; link.lastStatus = performance.now();
+  if (flags & 4) bootDownUntil = performance.now() + 150;
+  if (flags & 8){ if (!run) startRun(); else trigger('rb_button'); }
+  if ((flags & 2) && !(was & 2) && run) setMsg('로봇이 0.5초 동안 명령을 못 받아 스스로 제동했습니다. 브라우저 탭을 앞에 두세요.');
+}
+function syncFromInfo(info){
+  let changed = false;
+  for (const pos of POS4){
+    const v = info[pos], d = driveMotors().find(m => m.pos === pos);
+    if (!v || !d) continue;
+    const [a, b] = v.split(',').map(Number);
+    if (d.pins.IN1 !== a || d.pins.IN2 !== b){ d.pins.IN1 = a; d.pins.IN2 = b; changed = true; }
+  }
+  const o = devices.find(d => d.type === 'oled');
+  if (o && info.oled){ const [a, b] = info.oled.split(',').map(Number); if (o.pins.SDA !== a || o.pins.SCL !== b){ o.pins.SDA = a; o.pins.SCL = b; changed = true; } }
+  if (changed){ saveDevices(); renderAll(); }
+  return changed;
+}
+async function linkConnect(){
+  if (!linkSupported()){ renderLinkUi('이 브라우저는 Web Bluetooth를 지원하지 않습니다. 크롬이나 엣지(윈도우·맥·크롬북·안드로이드)에서 열어 주세요. 아이패드·아이폰은 아직 지원하지 않습니다.'); return; }
+  if (link.on || link.connecting) return;
+  link.connecting = true; renderLinkUi('로봇을 고르는 창이 열립니다. "RoboBlock-…" 을 고르고 연결을 누르세요.');
+  try{
+    const dev = await navigator.bluetooth.requestDevice({filters:[{namePrefix:'RoboBlock'}], optionalServices:[RB_SVC]});
+    renderLinkUi(`${dev.name || '로봇'}에 연결하는 중…`);
+    dev.addEventListener('gattserverdisconnected', onLinkLost);
+    const server = await dev.gatt.connect();
+    const svc = await server.getPrimaryService(RB_SVC);
+    const [cmd, st, inf] = await Promise.all([svc.getCharacteristic(RB_CMD), svc.getCharacteristic(RB_STATUS), svc.getCharacteristic(RB_INFO)]);
+    const info = parseInfo(new TextDecoder().decode(await inf.readValue()));
+    if (run) endRun('', '');
+    if (info.robot === 'soccer' && robotKey === 'middle') applyRobot('soccer', true);
+    Object.assign(link, {device:dev, cmd, info, real:{}, flags:0, on:true, connecting:false, busy:false, lastSent:'', lastSentAt:0, queue:[], lastStatus:performance.now(), stale:false});
+    st.addEventListener('characteristicvaluechanged', e => onStatus(e.target.value));
+    await st.startNotifications();
+    stopDrive();
+    const synced = syncFromInfo(info);
+    renderLinkUi();
+    setMsg(`${dev.name}과 연결했습니다. 로봇은 블록 모드라 Xbox 컨트롤러가 끊어졌습니다.` + (synced ? ' 로봇이 알려 준 핀으로 배선도를 맞췄습니다.' : ''));
+  }catch(e){
+    const cancelled = e && e.name === 'NotFoundError';
+    cleanupLink();
+    renderLinkUi(cancelled ? '' : '연결하지 못했습니다: ' + (e && e.message ? e.message : e) + ' — 로봇 전원과 펌웨어(soccer_roboblock)를 확인하세요.');
+  }
+}
+function cleanupLink(){
+  const dev = link.device;
+  Object.assign(link, {on:false, connecting:false, device:null, cmd:null, busy:false, real:{}, queue:[], stale:false});
+  if (dev) dev.removeEventListener('gattserverdisconnected', onLinkLost);
+}
+function onLinkLost(){
+  const name = link.device && link.device.name;
+  cleanupLink();
+  if (run) endRun('로봇 연결이 끊어졌습니다. 로봇은 조종 모드로 돌아갔습니다.', 'err');
+  else setMsg(`${name || '로봇'} 연결이 끊어졌습니다. 로봇은 조종 모드로 돌아가 Xbox 컨트롤러를 받습니다.`);
+  renderLinkUi(); renderAll();
+}
+async function linkDisconnect(){
+  if (!link.on) return;
+  if (run) endRun('', '');
+  try{ link.busy = true; await linkWrite(Uint8Array.from([0x02])); }catch(e){}
+  const dev = link.device;
+  cleanupLink();
+  try{ dev && dev.gatt.connected && dev.gatt.disconnect(); }catch(e){}
+  setMsg('연결을 끊었습니다. 로봇은 조종 모드로 돌아가 Xbox 컨트롤러를 받습니다.');
+  renderLinkUi(); renderAll();
+}
+function renderLinkUi(note){
+  const btn = $('#connectBtn'), name = link.device && link.device.name;
+  btn.textContent = link.on ? `● ${name || '로봇'}` : link.connecting ? '연결 중…' : '로봇 연결';
+  btn.classList.toggle('linked', link.on);
+  $('#wireTitle').textContent = 'ESP32 배선과 신호 · ' + ROBOTS[robotKey].label + (link.on ? ` · 실제 로봇 ${name || ''}` : ' · 화면 미리보기');
+  const body = $('#connectBody');
+  if (!body) return;
+  if (note !== undefined && note !== '') $('#connectCard').hidden = false;
+  let h = '';
+  if (link.on){
+    h += `<p><b>${esc(name || '로봇')}</b>과 연결됨 · ${esc(link.info.fw || '')}${link.stale ? ' · <b class="warn-t">상태 신호가 끊김</b>' : ''}</p>`;
+    h += '<p>로봇은 <b>블록 모드</b>입니다. Xbox 컨트롤러는 끊어지고, 이 화면의 블록으로만 움직입니다. 배선도와 모니터의 모터 값은 로봇이 보낸 실제 출력입니다.</p>';
+    h += '<p>연결을 끊으면 로봇은 조종 모드로 돌아가 Xbox 컨트롤러를 다시 받습니다. 브라우저 탭을 닫거나 숨기면 0.5초 안에 로봇이 스스로 제동합니다.</p>';
+    h += '<div class="row"><button type="button" class="btn stop" id="linkOff">연결 끊기</button></div>';
+  } else {
+    h += '<p>로봇에 <b>soccer_roboblock</b> 펌웨어를 올린 뒤, 로봇 전원을 켜고 아래 버튼을 누르세요. 크롬·엣지(윈도우·맥·크롬북·안드로이드)에서 됩니다.</p>';
+    h += '<p>연결되는 동안 로봇은 Xbox 컨트롤러를 끊고 블록으로만 움직입니다.</p>';
+    h += `<div class="row"><button type="button" class="btn run" id="linkOn"${link.connecting ? ' disabled' : ''}>블루투스로 연결</button>${linkSupported() ? '' : '<span class="meta">이 브라우저는 Web Bluetooth를 지원하지 않습니다.</span>'}</div>`;
+  }
+  if (note) h += `<p class="meta">${esc(note)}</p>`;
+  body.innerHTML = h;
+  const on = $('#linkOn'), off = $('#linkOff');
+  if (on) on.addEventListener('click', linkConnect);
+  if (off) off.addEventListener('click', linkDisconnect);
+}
+
 /* ───────────── UI ───────────── */
 function setStatus(text, kind){ const p = $('#statusPill'); p.textContent = text; p.className = 'pill' + (kind ? ' ' + kind : ''); }
 function setMsg(text){ $('#simMsg').textContent = text || ' '; }
 function setButtons(running){ $('#runBtn').disabled = running; $('#stopBtn').disabled = !running; }
 function renderAll(){ renderWiring(); renderDeviceList(); renderIssues(); renderMonitor(); refreshCode(); }
 function applyRobot(key, fromUser){
+  if (fromUser && link.on && link.info.robot && link.info.robot !== (key === 'sumo' ? 'soccer' : key)){ setMsg(`연결된 로봇은 ${link.info.robot === 'soccer' ? '축구로봇' : link.info.robot}입니다. 다른 로봇으로 바꾸려면 먼저 연결을 끊으세요.`); return; }
   if (run) endRun('', '');
   if (fromUser) saveWorkspace();
   robotKey = key; store.set('rb.robot', key); focusDev = null;
   document.querySelectorAll('#robotSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.robot === key)));
-  $('#wireTitle').textContent = 'ESP32 배선과 신호 · ' + ROBOTS[key].label;
+  renderLinkUi();
   $('#padCard').hidden = key === 'sumo';
   loadDevices(); resetRuntime();
   ws.updateToolbox(buildToolbox(robotKey, level));
@@ -1750,7 +1892,7 @@ $('#zoomOut').addEventListener('click', () => ws.zoomCenter(-1));
 $('#zoomFit').addEventListener('click', () => ws.zoomToFit());
 $('#wireFull').addEventListener('click', () => { const c = $('#wireCard'), on = !c.classList.contains('full'); c.classList.toggle('full', on); $('#wireFull').textContent = on ? '닫기' : '크게 보기'; });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#wireCard').classList.contains('full')){ $('#wireCard').classList.remove('full'); $('#wireFull').textContent = '크게 보기'; } });
-$('#connectBtn').addEventListener('click', () => { $('#connectCard').hidden = false; });
+$('#connectBtn').addEventListener('click', () => { $('#connectCard').hidden = false; renderLinkUi(); if (!link.on && !link.connecting && linkSupported()) linkConnect(); });
 $('#connectClose').addEventListener('click', () => { $('#connectCard').hidden = true; });
 $('#copyBtn').addEventListener('click', () => {
   const text = $('#cppOut').textContent;
@@ -1779,6 +1921,7 @@ if (window.ResizeObserver) new ResizeObserver(() => Blockly.svgResize(ws)).obser
 
 applyLevel(level);
 applyRobot(robotKey, false);
+renderLinkUi();
 requestAnimationFrame(ts => { lastT = ts; loop(ts); });
 })();
 </script>
