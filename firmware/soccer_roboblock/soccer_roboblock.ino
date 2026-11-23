@@ -587,7 +587,7 @@ void setupTFT() {
   oled.setTextColor(SSD1306_WHITE);
   oled.setTextSize(2);
   oled.setCursor(4, 4);
-  oled.print("4WD ROBOT");
+  oled.print("RoboMakers");
   oled.drawLine(0, 22, OLED_W - 1, 22, SSD1306_WHITE);
   oled.setTextSize(1);
   oled.setCursor(0, 28);
@@ -613,7 +613,7 @@ void updateTFT() {
   oled.setTextColor(SSD1306_WHITE);
   oled.setTextSize(2);
   oled.setCursor(4, 0);
-  oled.print(webMode ? "BLOCK MODE" : "4WD ROBOT");
+  oled.print(webMode ? "BLOCK MODE" : "RoboMakers");
   oled.drawLine(0, 18, OLED_W - 1, 18, SSD1306_WHITE);
 
   // PC(웹 에디터)와 연결·해제되는 순간 2초 동안 크게 안내
