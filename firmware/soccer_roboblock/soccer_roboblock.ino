@@ -180,7 +180,11 @@ uint16_t rl_onRead(hci_con_handle_t, uint16_t handle, uint16_t offset, uint8_t* 
     return att_read_callback_handle_blob(tmp, n, offset, buffer, size);
   }
   if (handle == INFO_HANDLE) {
-    return att_read_callback_handle_blob((const uint8_t*)rl_infoStr, strlen(rl_infoStr), offset, buffer, size);
+    char tmp[sizeof(rl_infoStr)];
+    portENTER_CRITICAL(&rl_mux);
+    memcpy(tmp, rl_infoStr, sizeof(tmp));
+    portEXIT_CRITICAL(&rl_mux);
+    return att_read_callback_handle_blob((const uint8_t*)tmp, strlen(tmp), offset, buffer, size);
   }
   if (handle == STATUS_CCC) {
     uint8_t v[2] = {(uint8_t)(rl_notifyOn ? 1 : 0), 0};
@@ -265,6 +269,14 @@ void rl_doDisconnect(void*) {
   if (rl_conHandle != HCI_CON_HANDLE_INVALID) gap_disconnect(rl_conHandle);
 }
 
+
+// 정보 문자열 바꾸기 (핀 설정이 바뀌었을 때)
+void rlSetInfo(const char* info) {
+  portENTER_CRITICAL(&rl_mux);
+  strncpy(rl_infoStr, info, sizeof(rl_infoStr) - 1);
+  rl_infoStr[sizeof(rl_infoStr) - 1] = 0;
+  portEXIT_CRITICAL(&rl_mux);
+}
 
 void rlBegin(const char* advName, const char* info) {
   strncpy(rl_infoStr, info, sizeof(rl_infoStr) - 1);
@@ -449,7 +461,9 @@ ControllerPtr myCtl = nullptr;
 int8_t  motorPct[4] = {0, 0, 0, 0};     // 지금 실제로 내보내는 출력 (−100~100 %)
 uint8_t brakeMask   = 0x0F;              // 비트가 1이면 그 바퀴는 능동 제동
 const int CH_OF[4][2] = { {0, 1}, {4, 5}, {2, 3}, {6, 7} };   // 바퀴별 (IN1 채널, IN2 채널)
-const int PIN_OF[4][2] = { {32, 33}, {27, 4}, {25, 26}, {22, 21} };
+const int PIN_DEFAULT[4][2] = { {32, 33}, {27, 4}, {25, 26}, {22, 21} };
+int PIN_OF[4][2] = { {32, 33}, {27, 4}, {25, 26}, {22, 21} };   // 바퀴별 (IN1, IN2) 핀 — 웹 에디터에서 바꾸면 NVS에 저장
+char robotInfo[200] = "";
 bool webMode = false;                    // 블록 모드(웹 에디터 연결)인가
 unsigned long lastWebCmdMs = 0;          // 마지막 웹 명령 시각 (안전 정지용)
 const unsigned long WEB_TIMEOUT_MS = 500;
@@ -851,6 +865,7 @@ void leaveWebMode() {
 //   0x04 글자...      : OLED 마지막 줄에 표시 (ASCII, 최대 18자)
 //   0x05 핀 값        : 디지털 출력 (모터·OLED·BOOT·플래시·입력 전용 핀은 거부)
 //   0x06 바퀴 값      : 바퀴 하나만 (0~3, int8 %)
+//   0x07 핀×8         : 바퀴 핀 설정 FL_IN1 FL_IN2 FR_IN1 FR_IN2 BL_IN1 BL_IN2 BR_IN1 BR_IN2 → 적용하고 NVS에 저장
 bool pinAllowed(int p) {
   if (p < 0 || p > 39) return false;
   if (p >= 6 && p <= 11) return false;           // 플래시
@@ -858,6 +873,59 @@ bool pinAllowed(int p) {
   if (p == 0 || p == 1 || p == 3) return false;  // BOOT, 시리얼
   if (p == OLED_SDA || p == OLED_SCL) return false;
   for (int i = 0; i < 4; i++) if (PIN_OF[i][0] == p || PIN_OF[i][1] == p) return false;
+  return true;
+}
+
+// ---- 모터 핀 설정 (바퀴별 IN1/IN2) ----
+bool motorPinOk(int p) {
+  if (p < 0 || p > 33) return false;              // 34~39는 입력 전용
+  if (p >= 6 && p <= 11) return false;            // 플래시
+  if (p == 0 || p == 1 || p == 3 || p == 12) return false;   // BOOT, 시리얼, 부팅 전압 핀
+  if (p == OLED_SDA || p == OLED_SCL) return false;
+  return true;
+}
+
+void buildInfo() {
+  snprintf(robotInfo, sizeof(robotInfo),
+           "robot=soccer;fw=roboblock-soccer-0.2;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0",
+           robotName, PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
+           PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL);
+}
+
+void loadMotorPins() {
+  uint8_t b[8];
+  prefs.begin("x4wd", true);
+  bool ok = prefs.getBytesLength("pins") == 8 && prefs.getBytes("pins", b, 8) == 8;
+  prefs.end();
+  if (!ok) return;
+  for (int i = 0; i < 8; i++) if (!motorPinOk(b[i])) return;           // 이상한 값이면 기본 핀 유지
+  for (int i = 0; i < 8; i++) for (int j = i + 1; j < 8; j++) if (b[i] == b[j]) return;
+  for (int i = 0; i < 4; i++) { PIN_OF[i][0] = b[2 * i]; PIN_OF[i][1] = b[2 * i + 1]; }
+}
+
+// 새 핀을 검사해 LEDC 채널에 다시 붙인다. 잘못된 값이면 아무것도 바꾸지 않는다.
+bool applyMotorPins(const uint8_t* b, bool save) {
+  for (int i = 0; i < 8; i++) if (!motorPinOk(b[i])) { Serial.printf("핀 설정 거부: GPIO%d는 모터에 쓸 수 없음\n", b[i]); return false; }
+  for (int i = 0; i < 8; i++) for (int j = i + 1; j < 8; j++) if (b[i] == b[j]) { Serial.println("핀 설정 거부: 같은 핀이 두 번 있음"); return false; }
+  brakeAll();
+  for (int i = 0; i < 4; i++) for (int k = 0; k < 2; k++) {      // 옛 핀 떼기 → LOW
+    ledcDetachPin(PIN_OF[i][k]);
+    pinMode(PIN_OF[i][k], OUTPUT);
+    digitalWrite(PIN_OF[i][k], LOW);
+  }
+  for (int i = 0; i < 4; i++) for (int k = 0; k < 2; k++) {      // 새 핀 붙이기
+    PIN_OF[i][k] = b[2 * i + k];
+    ledcAttachPin(PIN_OF[i][k], CH_OF[i][k]);
+  }
+  brakeAll();
+  if (save) {
+    prefs.begin("x4wd", false);
+    prefs.putBytes("pins", b, 8);
+    prefs.end();
+  }
+  buildInfo();
+  rlSetInfo(robotInfo);
+  Serial.printf("모터 핀 변경: FL %d,%d  FR %d,%d  BL %d,%d  BR %d,%d\n", b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
   return true;
 }
 
@@ -887,6 +955,9 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
     }
     case 0x05:
       if (n >= 3 && pinAllowed(d[1])) { pinMode(d[1], OUTPUT); digitalWrite(d[1], d[2] ? HIGH : LOW); }
+      break;
+    case 0x07:
+      if (n >= 9) applyMotorPins(d + 1, true);
       break;
     case 0x06:
       if (n >= 3 && d[1] < 4) setWheel(d[1], (int8_t)d[2]);
@@ -922,11 +993,8 @@ void startRoboLink() {
   uint64_t mac = ESP.getEfuseMac();
   char* name = robotName;
   snprintf(robotName, sizeof(robotName), "RoboBlock-%02X%02X", (uint8_t)(mac >> 32), (uint8_t)(mac >> 40));
-  char info[200];
-  snprintf(info, sizeof(info),
-           "robot=soccer;fw=roboblock-soccer-0.1;name=%s;"
-           "FL=32,33;FR=27,4;BL=25,26;BR=22,21;oled=16,17;boot=0", name);
-  rlBegin(name, info);
+  buildInfo();
+  rlBegin(name, robotInfo);
   Serial.printf("로보블록 웹 블루투스 이름: %s\n", name);
 }
 
@@ -942,9 +1010,9 @@ void setup() {
   // DRV8871은 IN1=IN2=0이면 코스트(정지) 상태.
   // 내부 풀다운만으론 부팅 첫 수십 ms 동안 모터선 결합으로 튈 수 있어,
   // 가능한 한 빨리 핀을 출력 LOW로 잡아 강제 코스트 시킨다.
-  const int inPins[8] = { LF_IN1, LF_IN2, LR_IN1, LR_IN2,
-                          RF_IN1, RF_IN2, RR_IN1, RR_IN2 };
-  for (int p : inPins) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
+  //   핀은 웹 에디터에서 바꿔 저장한 값(NVS)을 먼저 읽는다. 없으면 기본 핀.
+  loadMotorPins();
+  for (int i = 0; i < 4; i++) for (int k = 0; k < 2; k++) { pinMode(PIN_OF[i][k], OUTPUT); digitalWrite(PIN_OF[i][k], LOW); }
 
   Serial.begin(115200);
   delay(300);
@@ -952,14 +1020,13 @@ void setup() {
 
   // PWM 채널 8개 설정 후 각 IN핀에 연결.
   // (STBY가 없으므로 외부 10k 풀다운으로 부팅 중 코스트 보장 — 배선 가이드 참조)
-  ledcSetup(CH_LF1, PWM_FREQ, PWM_RES); ledcAttachPin(LF_IN1, CH_LF1);
-  ledcSetup(CH_LF2, PWM_FREQ, PWM_RES); ledcAttachPin(LF_IN2, CH_LF2);
-  ledcSetup(CH_LR1, PWM_FREQ, PWM_RES); ledcAttachPin(LR_IN1, CH_LR1);
-  ledcSetup(CH_LR2, PWM_FREQ, PWM_RES); ledcAttachPin(LR_IN2, CH_LR2);
-  ledcSetup(CH_RF1, PWM_FREQ, PWM_RES); ledcAttachPin(RF_IN1, CH_RF1);
-  ledcSetup(CH_RF2, PWM_FREQ, PWM_RES); ledcAttachPin(RF_IN2, CH_RF2);
-  ledcSetup(CH_RR1, PWM_FREQ, PWM_RES); ledcAttachPin(RR_IN1, CH_RR1);
-  ledcSetup(CH_RR2, PWM_FREQ, PWM_RES); ledcAttachPin(RR_IN2, CH_RR2);
+  //   바퀴 i의 IN1/IN2 핀을 채널 CH_OF[i]에 붙인다 (FL=0/1, FR=4/5, BL=2/3, BR=6/7)
+  for (int i = 0; i < 4; i++) for (int k = 0; k < 2; k++) {
+    ledcSetup(CH_OF[i][k], PWM_FREQ, PWM_RES);
+    ledcAttachPin(PIN_OF[i][k], CH_OF[i][k]);
+  }
+  Serial.printf("모터 핀: FL %d,%d  FR %d,%d  BL %d,%d  BR %d,%d\n", PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
+                PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1]);
 
   // 부팅 직후엔 능동 제동 상태로 시작
   brakeAll();

@@ -113,6 +113,15 @@ select.warn{border-color:var(--accent)}
 .dev-type{font-size:11px;color:var(--muted)}
 .dev-pins{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 8px;align-items:center;font-size:12px}
 .dev-pins i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.mtrs{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px}
+.mtr{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.mtr.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.mtr-head{display:flex;gap:8px;align-items:baseline}
+.mtr-head .meta{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mtr-v{font-family:var(--font-mono);font-size:12.5px;font-weight:600;white-space:nowrap}
+.mtr-pins{display:grid;grid-template-columns:auto minmax(0,1fr) auto minmax(0,1fr);gap:4px 6px;align-items:center;font-size:12px}
+.mtr-wheel{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 6px;align-items:center;font-size:12px}
+#mtSpeed{width:110px;accent-color:var(--accent)}
 .issues{margin:0;padding-left:18px;font-size:12.5px;line-height:1.55}
 .issues li.err{color:var(--pill-err-ink)}
 .issues li.warn{color:var(--pill-wait-ink)}
@@ -219,6 +228,18 @@ select.warn{border-color:var(--accent)}
           <button type="button" class="btn sm" id="bootBtn">로봇 버튼 (BOOT)</button>
           <span class="meta" id="simMsg">블록을 조립하고 실행을 누르세요.</span>
         </div>
+      </div>
+
+      <div class="card" id="motorCard">
+        <div class="head"><h2>모터 핀과 바퀴</h2><span class="pill" id="motorSync">화면 미리보기</span></div>
+        <div class="meta">모터 드라이버마다 IN1·IN2 핀과 어느 바퀴인지 정합니다. 예: GPIO 32·33 → 앞-왼쪽. 전진·후진 버튼은 그 바퀴만 정한 시간 동안 돌립니다.</div>
+        <div class="mtrs" id="motorRows"></div>
+        <div class="row">
+          <label class="meta" for="mtSpeed">속도</label><input type="range" id="mtSpeed" min="20" max="100" step="5" value="60"><span class="meta" id="mtSpeedV">60%</span>
+          <label class="meta" for="mtTime">시간</label><select id="mtTime"><option value="0.5">0.5초</option><option value="1" selected>1초</option><option value="2">2초</option><option value="3">3초</option></select>
+          <button type="button" class="btn sm stop" id="mtStop">모두 정지</button>
+        </div>
+        <div class="row"><button type="button" class="btn sm" id="mtApply" disabled>로봇에 핀 적용·저장</button><span class="meta" id="mtApplyMsg">로봇과 연결하면 이 핀을 로봇에 보내 저장할 수 있습니다.</span></div>
       </div>
 
       <details class="card" id="devCard">
@@ -417,6 +438,7 @@ const BLOCKS = [
   {cat:'move', level:1, robots:'all', json:{type:'rb_move_cells', message0:'%1 %2 칸', args0:[{type:'field_dropdown', name:'DIR', options:[['앞으로 ↑','F'],['뒤로 ↓','B']]},{type:'input_value', name:'N', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{N:2}},
   {cat:'move', level:1, robots:'all', json:{type:'rb_turn', message0:'%1 으로 %2 ° 돌기', args0:[{type:'field_dropdown', name:'DIR', options:[['왼쪽 ↶','L'],['오른쪽 ↷','R']]},{type:'input_value', name:'DEG', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{DEG:90}},
   {cat:'move', level:1, robots:['middle'], json:{type:'rb_strafe', message0:'%1 으로 %2 칸 옆걸음', args0:[{type:'field_dropdown', name:'DIR', options:[['왼쪽 ←','L'],['오른쪽 →','R']]},{type:'input_value', name:'N', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{N:1}},
+  {cat:'move', level:1, robots:'all', json:{type:'rb_wheel_only', message0:'%1 바퀴만 %2 %3 %% %4 초', args0:[{type:'field_dropdown', name:'WHEEL', options:[['앞-왼쪽','FL'],['앞-오른쪽','FR'],['뒤-왼쪽','BL'],['뒤-오른쪽','BR']]},{type:'field_dropdown', name:'DIR', options:[['전진','F'],['후진','B']]},{type:'input_value', name:'SPEED', check:'Number'},{type:'input_value', name:'SEC', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks', tooltip:'한 바퀴만 정한 시간 동안 돌리고 멈춥니다. 다른 바퀴는 제동합니다. 배선 확인에 씁니다.'}, shadows:{SPEED:60, SEC:1}},
   {cat:'move', level:1, robots:'all', json:{type:'rb_stop', message0:'멈추기', previousStatement:null, nextStatement:null, style:'move_blocks'}},
   {cat:'move', level:2, robots:'all', json:{type:'rb_drive_time', message0:'%1 %% 속도로 %2 초 %3', args0:[{type:'input_value', name:'SPEED', check:'Number'},{type:'input_value', name:'SEC', check:'Number'},{type:'field_dropdown', name:'DIR', options:[['전진','F'],['후진','B']]}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks'}, shadows:{SPEED:70, SEC:1}},
   {cat:'move', level:2, robots:'all', json:{type:'rb_wheels', message0:'왼쪽 바퀴 %1 %% 오른쪽 바퀴 %2 %%', args0:[{type:'input_value', name:'L', check:'Number'},{type:'input_value', name:'R', check:'Number'}], inputsInline:true, previousStatement:null, nextStatement:null, style:'move_blocks', tooltip:'바퀴 속도를 정하고 바로 다음 블록으로 넘어갑니다.'}, shadows:{L:50, R:80}},
@@ -1284,7 +1306,8 @@ function bindStick(el){
 
 /* ───────────── 장치 시간 진행 ───────────── */
 function tick(dt, now){
-  if (robotKey !== 'sumo' && manualActive() && countdown <= 0 && !link.on) manualDrive(dt);   // 로봇 연결 중에는 블록으로만 움직인다
+  tickWheelTest(now);
+  if (robotKey !== 'sumo' && manualActive() && countdown <= 0 && !link.on && !wheelTest.until) manualDrive(dt);   // 로봇 연결 중에는 블록으로만 움직인다
   for (const d of devices){
     const s = R(d);
     if (d.type === 'servo' && s.target != null){
@@ -1312,7 +1335,7 @@ function loop(now){
   const dt = Math.min(0.05, (now - lastT)/1000); lastT = now;
   tick(dt, now);
   linkPump(now);
-  if (now - lastUi >= 80){ lastUi = now; updateSignals(); updateMonitor(now); updatePanels(); }
+  if (now - lastUi >= 80){ lastUi = now; updateSignals(); updateMonitor(now); updatePanels(); updateMotorPanel(); }
   requestAnimationFrame(loop);
 }
 function updatePanels(){
@@ -1430,6 +1453,12 @@ async function execStmt(b){
     case 'rb_move_cells': { const cells = posNum(await val(b, 'N', 1), 20); await straight((b.getFieldValue('DIR') === 'B' ? -1 : 1)*cells*CELL, 60); break; }
     case 'rb_turn': await turnDeg(posNum(await val(b, 'DEG', 90), 1080), b.getFieldValue('DIR')); break;
     case 'rb_stop': stopDrive(); await frame(); break;
+    case 'rb_wheel_only': {
+      const pos = b.getFieldValue('WHEEL'), pct = Math.abs(clampPct(await val(b, 'SPEED', 60))), sec = posNum(await val(b, 'SEC', 1), 30);
+      if (!driveMotors().some(m => m.pos === pos)){ setMsg(`${WHEEL_NAMES[pos]} 바퀴로 정한 모터가 없습니다. "모터 핀과 바퀴"에서 정하세요.`); break; }
+      stopDrive(); setWheel(pos, (b.getFieldValue('DIR') === 'B' ? -1 : 1)*pct);
+      await sleep(sec*1000); stopDrive(); break;
+    }
     case 'rb_drive_time': {
       const pct = Math.abs(clampPct(await val(b, 'SPEED', 70))), sec = posNum(await val(b, 'SEC', 1), 30), sg = b.getFieldValue('DIR') === 'B' ? -1 : 1;
       Rb.mecanum ? mec(sg*pct, 0, 0) : skid(sg*pct, sg*pct);
@@ -1508,6 +1537,7 @@ async function runTask(hat){
 }
 async function startRun(){
   if (run) return;
+  stopWheelTest('');
   saveWorkspace();
   const types = new Set(ws.getAllBlocks(false).map(b => b.type));
   run = {stopped:false, tasks:new Set(), vars:new Map(), frames:[], manual:false, padOwned:['rb_pad_pressed','rb_pad_axis','rb_pad_connected'].some(t => types.has(t))};
@@ -1635,6 +1665,7 @@ function genCpp(){
       case 'rb_move_cells': return `${p}rb.${b.getFieldValue('DIR') === 'B' ? 'backwardCells' : 'forwardCells'}(${V('N','1')});\n`;
       case 'rb_turn': return `${p}rb.${b.getFieldValue('DIR') === 'L' ? 'turnLeft' : 'turnRight'}(${V('DEG','90')});\n`;
       case 'rb_stop': return `${p}rb.brake();\n`;
+      case 'rb_wheel_only': return `${p}rb.wheelOnly(WHEEL_${b.getFieldValue('WHEEL')}, ${b.getFieldValue('DIR') === 'B' ? '-' : ''}${V('SPEED','60')}, ${V('SEC','1')});\n`;
       case 'rb_drive_time': return `${p}rb.drive(${b.getFieldValue('DIR') === 'B' ? '-' : ''}${V('SPEED','70')}, ${V('SEC','1')});\n`;
       case 'rb_wheels': return `${p}rb.wheels(${V('L','0')}, ${V('R','0')});\n`;
       case 'rb_strafe': return `${p}rb.strafe(${b.getFieldValue('DIR') === 'L' ? '-' : ''}${V('N','1')});\n`;
@@ -1711,6 +1742,118 @@ function refreshCode(){
   }catch(e){ $('#cppOut').textContent = '// 코드를 만들지 못했습니다: ' + e.message; }
 }
 
+/* ───────────── 모터 핀과 바퀴 설정 패널 ─────────────
+   DC 모터(드라이버)마다 IN1·IN2 핀과 바퀴 위치를 정하고, 그 바퀴만 잠깐 돌려 본다.
+   로봇과 연결되어 있으면 "로봇에 적용"으로 핀을 로봇에 보내 저장한다(명령 0x07). */
+const WHEEL_NAMES = {FL:'앞-왼쪽', FR:'앞-오른쪽', BL:'뒤-왼쪽', BR:'뒤-오른쪽'};
+const wheelTest = {until:0, id:null};
+function dcMotors(){ return devices.filter(d => d.type === 'drv8871' || d.type === 'encmotor'); }
+function isAutoName(n){ return /^(앞|뒤)-(왼|오른)쪽 모터$/.test(n) || /^(DC|엔코더) 모터( \d+)?$/.test(n); }
+function setMotorWheel(d, pos){
+  const old = d.pos || null;
+  if (pos){
+    const other = dcMotors().find(m => m !== d && m.pos === pos);
+    if (other){ if (old) other.pos = old; else delete other.pos; if (isAutoName(other.name)) other.name = other.pos ? WHEEL_NAMES[other.pos] + ' 모터' : DEVICE_TYPES[other.type].defaultName; }
+    d.pos = pos;
+  } else delete d.pos;
+  if (isAutoName(d.name)) d.name = d.pos ? WHEEL_NAMES[d.pos] + ' 모터' : DEVICE_TYPES[d.type].defaultName;
+}
+function startWheelTest(d, dir){
+  if (run) endRun('', '');
+  const pct = Number($('#mtSpeed').value) || 60, sec = Number($('#mtTime').value) || 1;
+  stopDrive(); for (const m of dcMotors()){ const s = R(m); s.cmd = 0; s.brake = true; }
+  const s = R(d); s.cmd = dir*pct; s.brake = false;
+  wheelTest.until = performance.now() + sec*1000; wheelTest.id = d.id;
+  focusDev = d.id; renderWiring(); markFocusRow(); renderMotorPanel(true);
+  const where = d.pos ? WHEEL_NAMES[d.pos] + ' 바퀴' : d.name;
+  setMsg(`${where}만 ${sec}초 ${dir > 0 ? '전진' : '후진'} (${pct}%)` + (link.on ? ' — 실제 로봇' : ' — 화면 미리보기') + (d.pos || !link.on ? '' : '. 바퀴 위치가 없는 모터는 로봇에 보내지 않습니다.'));
+}
+function stopWheelTest(msg){
+  if (!wheelTest.until) return;
+  wheelTest.until = 0;
+  for (const m of dcMotors()){ const s = R(m); s.cmd = 0; s.brake = true; }
+  stopDrive();
+  if (msg) setMsg(msg);
+}
+function tickWheelTest(now){ if (wheelTest.until && now >= wheelTest.until) stopWheelTest(''); }
+function motorPinsMatchRobot(){
+  if (!link.on) return null;
+  for (const pos of POS4){
+    const d = dcMotors().find(m => m.pos === pos), v = link.info[pos];
+    if (!d || !v) return false;
+    const [a, b] = v.split(',').map(Number);
+    if (d.pins.IN1 !== a || d.pins.IN2 !== b) return false;
+  }
+  return true;
+}
+async function applyPinsToRobot(){
+  const msg = $('#mtApplyMsg');
+  if (!link.on){ msg.textContent = '먼저 로봇을 연결하세요.'; return; }
+  const bytes = [0x07];
+  for (const pos of POS4){
+    const d = dcMotors().find(m => m.pos === pos);
+    if (!d || d.pins.IN1 == null || d.pins.IN2 == null){ msg.textContent = `${WHEEL_NAMES[pos]} 바퀴의 모터나 핀이 정해지지 않았습니다.`; return; }
+    bytes.push(d.pins.IN1, d.pins.IN2);
+  }
+  const {state} = checkDevices();
+  if (dcMotors().some(d => d.pos && (state[d.id + '.IN1'] === 'bad' || state[d.id + '.IN2'] === 'bad'))){ msg.textContent = '빨간색으로 표시된 핀을 먼저 고치세요.'; return; }
+  stopWheelTest(''); if (run) endRun('', '');
+  msg.textContent = '로봇에 보내는 중…';
+  linkQueue(bytes);
+  await new Promise(r => setTimeout(r, 500));
+  try{
+    link.info = parseInfo(new TextDecoder().decode(await link.inf.readValue()));
+    const ok = motorPinsMatchRobot();
+    msg.textContent = ok ? '로봇에 적용하고 저장했습니다. 다시 켜도 이 핀을 씁니다.' : '로봇이 이 핀을 받지 않았습니다. 입력 전용·플래시·OLED·BOOT 핀이나 겹치는 핀이 없는지 보세요.';
+  }catch(e){ msg.textContent = '로봇 정보를 다시 읽지 못했습니다: ' + e.message; }
+  renderMotorPanel(true);
+}
+function renderMotorPanel(force){
+  const box = $('#motorRows');
+  if (!box || (!force && box.contains(document.activeElement))) return;
+  const {state} = checkDevices();
+  box.innerHTML = '';
+  const list = dcMotors();
+  if (!list.length){ box.innerHTML = '<p class="meta">DC 모터가 없습니다. "장치 추가"에서 DC 모터를 넣으세요.</p>'; }
+  list.forEach((d, i) => {
+    const id = sid(d.id), row = document.createElement('div');
+    row.className = 'mtr' + (focusDev === d.id ? ' focus' : '');
+    const head = document.createElement('div'); head.className = 'mtr-head';
+    head.innerHTML = `<b>모터 ${i + 1}</b><span class="meta">${esc(DEVICE_TYPES[d.type].short)}</span><span class="mtr-v" id="mtv-${id}"></span>`;
+    const wsel = document.createElement('select'); wsel.id = 'mw-' + id; wsel.setAttribute('aria-label', `모터 ${i + 1} 바퀴 위치`);
+    for (const [v, t] of [['FL','앞-왼쪽'],['FR','앞-오른쪽'],['BL','뒤-왼쪽'],['BR','뒤-오른쪽'],['','바퀴 아님']]){ const o = document.createElement('option'); o.value = v; o.textContent = t; wsel.appendChild(o); }
+    wsel.value = d.pos || '';
+    wsel.addEventListener('change', () => { setMotorWheel(d, wsel.value || null); saveDevices(); wsel.blur(); renderAll(); });
+    const pins = document.createElement('div'); pins.className = 'mtr-pins';
+    for (const r of ['IN1','IN2']){
+      const lab = document.createElement('label'); lab.htmlFor = `mp-${id}-${r}`; lab.textContent = r;
+      const sel = pinSelect(`mp-${id}-${r}`, d.pins[r], state[d.id + '.' + r]);
+      sel.addEventListener('change', () => { d.pins[r] = sel.value === '' ? null : Number(sel.value); saveDevices(); sel.blur(); renderAll(); });
+      pins.append(lab, sel);
+    }
+    const swap = document.createElement('button'); swap.type = 'button'; swap.className = 'btn sm'; swap.textContent = '⇄ 방향 바꾸기'; swap.id = 'ms-' + id;
+    swap.title = 'IN1과 IN2 핀을 맞바꿉니다. 전진인데 바퀴가 뒤로 돌면 누르세요.';
+    swap.addEventListener('click', () => { const t = d.pins.IN1; d.pins.IN1 = d.pins.IN2; d.pins.IN2 = t; saveDevices(); renderAll(); setMsg(`${d.name}: IN1·IN2를 맞바꿨습니다.`); });
+    const tests = document.createElement('div'); tests.className = 'row';
+    const back = document.createElement('button'); back.type = 'button'; back.className = 'btn sm'; back.id = 'mtb-' + id; back.textContent = '◀ 후진';
+    const fwd = document.createElement('button'); fwd.type = 'button'; fwd.className = 'btn sm run'; fwd.id = 'mtf-' + id; fwd.textContent = '전진 ▶';
+    back.addEventListener('click', () => startWheelTest(d, -1));
+    fwd.addEventListener('click', () => startWheelTest(d, 1));
+    tests.append(swap, back, fwd);
+    const wl = document.createElement('label'); wl.htmlFor = wsel.id; wl.textContent = '바퀴'; wl.className = 'meta';
+    const wrow = document.createElement('div'); wrow.className = 'mtr-wheel'; wrow.append(wl, wsel);
+    row.append(head, wrow, pins, tests);
+    row.addEventListener('focusin', () => { if (focusDev !== d.id){ focusDev = d.id; renderWiring(); markFocusRow(); } });
+    box.appendChild(row);
+  });
+  const sync = $('#motorSync'), match = motorPinsMatchRobot();
+  sync.textContent = match == null ? '화면 미리보기' : match ? '로봇과 핀이 같음' : '로봇과 핀이 다름 — 적용 필요';
+  sync.className = 'pill' + (match == null ? '' : match ? ' run' : ' wait');
+  $('#mtApply').disabled = !link.on;
+}
+function updateMotorPanel(){
+  for (const d of dcMotors()){ const v = document.getElementById('mtv-' + sid(d.id)); if (v) v.textContent = cardValue(d); }
+}
 /* ───────────── 실제 로봇 연결 (Web Bluetooth) ─────────────
    로봇 펌웨어의 RoboLink(BLE GATT)와 통신한다. 연결되면 로봇은 블록 모드가 되어
    Xbox 컨트롤러를 끊고, 이 페이지가 보내는 명령으로만 움직인다.
@@ -1786,7 +1929,7 @@ async function linkConnect(){
     const info = parseInfo(new TextDecoder().decode(await inf.readValue()));
     if (run) endRun('', '');
     if (info.robot === 'soccer' && robotKey === 'middle') applyRobot('soccer', true);
-    Object.assign(link, {device:dev, cmd, info, real:{}, flags:0, on:true, connecting:false, busy:false, lastSent:'', lastSentAt:0, queue:[], lastStatus:performance.now(), stale:false});
+    Object.assign(link, {device:dev, cmd, inf, info, real:{}, flags:0, on:true, connecting:false, busy:false, lastSent:'', lastSentAt:0, queue:[], lastStatus:performance.now(), stale:false});
     st.addEventListener('characteristicvaluechanged', e => onStatus(e.target.value));
     await st.startNotifications();
     stopDrive();
@@ -1822,6 +1965,7 @@ async function linkDisconnect(){
   renderLinkUi(); renderAll();
 }
 function renderLinkUi(note){
+  if ($('#motorRows')) renderMotorPanel(true);
   const btn = $('#connectBtn'), name = link.device && link.device.name;
   btn.textContent = link.on ? `● ${name || '로봇'}` : link.connecting ? '연결 중…' : '로봇 연결';
   btn.classList.toggle('linked', link.on);
@@ -1851,7 +1995,7 @@ function renderLinkUi(note){
 function setStatus(text, kind){ const p = $('#statusPill'); p.textContent = text; p.className = 'pill' + (kind ? ' ' + kind : ''); }
 function setMsg(text){ $('#simMsg').textContent = text || ' '; }
 function setButtons(running){ $('#runBtn').disabled = running; $('#stopBtn').disabled = !running; }
-function renderAll(){ renderWiring(); renderDeviceList(); renderIssues(); renderMonitor(); refreshCode(); }
+function renderAll(){ renderWiring(); renderDeviceList(); renderMotorPanel(); renderIssues(); renderMonitor(); refreshCode(); }
 function applyRobot(key, fromUser){
   if (fromUser && link.on && link.info.robot && link.info.robot !== (key === 'sumo' ? 'soccer' : key)){ setMsg(`연결된 로봇은 ${link.info.robot === 'soccer' ? '축구로봇' : link.info.robot}입니다. 다른 로봇으로 바꾸려면 먼저 연결을 끊으세요.`); return; }
   if (run) endRun('', '');
@@ -1892,6 +2036,9 @@ $('#zoomOut').addEventListener('click', () => ws.zoomCenter(-1));
 $('#zoomFit').addEventListener('click', () => ws.zoomToFit());
 $('#wireFull').addEventListener('click', () => { const c = $('#wireCard'), on = !c.classList.contains('full'); c.classList.toggle('full', on); $('#wireFull').textContent = on ? '닫기' : '크게 보기'; });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#wireCard').classList.contains('full')){ $('#wireCard').classList.remove('full'); $('#wireFull').textContent = '크게 보기'; } });
+$('#mtSpeed').addEventListener('input', () => { $('#mtSpeedV').textContent = $('#mtSpeed').value + '%'; });
+$('#mtStop').addEventListener('click', () => { if (run) endRun('정지했습니다.', ''); stopWheelTest('모두 정지했습니다.'); stopDrive(); });
+$('#mtApply').addEventListener('click', applyPinsToRobot);
 $('#connectBtn').addEventListener('click', () => { $('#connectCard').hidden = false; renderLinkUi(); if (!link.on && !link.connecting && linkSupported()) linkConnect(); });
 $('#connectClose').addEventListener('click', () => { $('#connectCard').hidden = true; });
 $('#copyBtn').addEventListener('click', () => {
