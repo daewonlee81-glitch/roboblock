@@ -811,6 +811,8 @@ function checkDevices(){
 }
 
 /* ───────────── 신호 계산 (장치 상태 → 각 선의 신호) ───────────── */
+// 로봇과 연결되어 있고, 로봇이 이 핀의 센서 값을 보내 주는가 (지금은 Sharp 거리 센서)
+function isRealSensor(d){ return !!(link.on && d.type === 'sharp' && link.info.sharp && link.info.sharp !== '255' && d.pins.OUT === Number(link.info.sharp)); }
 function sensorValue(d){
   const s = R(d); s.flash = performance.now() + 300;
   if (d.type === 'button') return (d.id === 'boot' && performance.now() < bootDownUntil) || s.pressed ? 1 : 0;
@@ -842,7 +844,8 @@ function sigOf(d, role){
     case 'buzzer': return now < s.until ? {mode:'pwm', active:true, text:'2.7 kHz', speed:0.3} : {mode:'low', text:'LOW'};
     case 'button': { const p = (d.id === 'boot' && now < bootDownUntil) || s.pressed; return p ? {mode:'low', active:true, text:'LOW (눌림)'} : {mode:'high', text:'HIGH'}; }
     case 'e18': return s.value ? {mode:'low', active:true, text:'LOW (감지)'} : {mode:'high', text:'HIGH'};
-    case 'irfloor': case 'sharp': return {mode:'adc', active:fl, text:`ADC ${adcOf(d)}`};
+    case 'irfloor': case 'sharp': if (isRealSensor(d)) return {mode:'adc', active:true, text:`${((s.mv || 0)/1000).toFixed(2)} V`};
+      return {mode:'adc', active:fl, text:`ADC ${adcOf(d)}`};
     case 'hcsr04': return role === 'TRIG' ? (fl ? {mode:'pulse', active:true, text:'10 µs', speed:0.3} : {mode:'low', text:'LOW'})
                                           : (fl ? {mode:'pulse', active:true, text:`${Math.round(s.value*58)} µs`, speed:0.3} : {mode:'low', text:'LOW'});
     default: // I²C 장치
@@ -864,7 +867,7 @@ function cardValue(d){
     case 'button': return sigOf(d, 'SIG').active ? '눌림' : '—';
     case 'e18': return s.value ? '감지' : '—';
     case 'oled': return 'I²C ' + T.addr;
-    default: return `${Math.round(s.value)}${T.sensor && T.sensor.unit ? ' ' + T.sensor.unit : ''}`;
+    default: if (s.far) return `>${T.sensor.max} ${T.sensor.unit}`; return `${Math.round(s.value)}${T.sensor && T.sensor.unit ? ' ' + T.sensor.unit : ''}`;
   }
 }
 function numValue(d){
@@ -1252,8 +1255,11 @@ function renderMonitor(){
       const S = T.sensor, inp = document.createElement('input');
       inp.type = 'range'; inp.min = S.min; inp.max = S.max; inp.step = S.bool ? 1 : 1; inp.value = R(d).value; inp.id = 'vi-' + robotKey + '-' + sid(d.id);
       inp.setAttribute('aria-label', d.name + ' 가상 입력');
-      inp.addEventListener('input', () => { R(d).value = Number(inp.value); });
-      const lab = document.createElement('div'); lab.className = 'vi'; lab.textContent = `가상 입력: ${S.name}${S.unit ? ' (' + S.unit + ')' : ''} — 실제 로봇에선 센서 값이 들어옵니다`;
+      inp.addEventListener('input', () => { R(d).value = Number(inp.value); R(d).far = false; });
+      const real = isRealSensor(d);
+      inp.disabled = real;
+      const lab = document.createElement('div'); lab.className = 'vi';
+      lab.textContent = real ? `로봇 센서 값 (실제, GPIO ${d.pins.OUT})` : `가상 입력: ${S.name}${S.unit ? ' (' + S.unit + ')' : ''} — 실제 로봇에선 센서 값이 들어옵니다`;
       box.append(inp, lab);
     }
     if (d.type === 'button' && d.id !== 'boot'){
@@ -1283,6 +1289,7 @@ function updateMonitor(now){
     const v = numValue(d);
     if (sample){ const h = hist.get(d.id) || []; h.push(v); if (h.length > 60) h.shift(); hist.set(d.id, h); }
     const mv = document.getElementById('mv-' + sid(d.id)); if (mv) mv.textContent = cardValue(d);
+    const vi = document.getElementById('vi-' + robotKey + '-' + sid(d.id)); if (vi && vi.disabled) vi.value = R(d).value;
     const cv = document.getElementById('mc-' + sid(d.id)); if (!cv || !sample) continue;
     const h = hist.get(d.id) || [], c = cv.getContext('2d'), w = cv.width, hh = cv.height;
     c.clearRect(0, 0, w, hh);
@@ -1890,10 +1897,13 @@ async function applyPinsToRobot(){
   stopWheelTest(''); if (run) endRun('', '');
   msg.textContent = '로봇에 보내는 중…';
   linkQueue(bytes);
+  const sh = devices.find(d => d.type === 'sharp');
+  if (sh && sh.pins.OUT != null && link.info.sharp !== undefined) linkQueue([0x08, sh.pins.OUT]);
   await new Promise(r => setTimeout(r, 500));
   try{
     link.info = parseInfo(new TextDecoder().decode(await link.inf.readValue()));
-    const ok = motorPinsMatchRobot();
+    const shp = devices.find(d => d.type === 'sharp');
+    const ok = motorPinsMatchRobot() && (!shp || link.info.sharp === undefined || Number(link.info.sharp) === shp.pins.OUT);
     msg.textContent = ok ? '로봇에 적용하고 저장했습니다. 다시 켜도 이 핀을 씁니다.' : '로봇이 이 핀을 받지 않았습니다. 입력 전용·플래시·OLED·BOOT 핀이나 겹치는 핀이 없는지 보세요.';
   }catch(e){ msg.textContent = '로봇 정보를 다시 읽지 못했습니다: ' + e.message; }
   renderMotorPanel(true);
@@ -1991,6 +2001,12 @@ function onStatus(dv){
   if (flags & 4) bootDownUntil = performance.now() + 150;
   if (flags & 8){ if (!run) startRun(); else trigger('rb_button'); }
   if ((flags & 2) && !(was & 2) && run) setMsg('로봇이 0.5초 동안 명령을 못 받아 스스로 제동했습니다. 브라우저 탭을 앞에 두세요.');
+  if (dv.byteLength >= 17){
+    const mv = dv.getUint16(14, true), cm = dv.getUint8(16);
+    for (const d of devices) if (isRealSensor(d)){
+      const st = R(d); st.mv = mv; st.far = cm === 255; st.value = cm === 255 ? 99 : cm === 0 ? 0 : cm; st.flash = performance.now() + 300;
+    }
+  }
 }
 function syncFromInfo(info){
   let changed = false;
@@ -2002,6 +2018,11 @@ function syncFromInfo(info){
   }
   const o = devices.find(d => d.type === 'oled');
   if (o && info.oled){ const [a, b] = info.oled.split(',').map(Number); if (o.pins.SDA !== a || o.pins.SCL !== b){ o.pins.SDA = a; o.pins.SCL = b; changed = true; } }
+  if (info.sharp && info.sharp !== '255'){
+    const pin = Number(info.sharp), sh = devices.find(d => d.type === 'sharp');
+    if (!sh){ devices.push({id:'sharp', type:'sharp', name:'앞 거리 (Sharp)', pins:{OUT:pin}}); changed = true; }
+    else if (sh.pins.OUT !== pin){ sh.pins.OUT = pin; changed = true; }
+  }
   if (changed){ saveDevices(); renderAll(); }
   return changed;
 }
@@ -2272,7 +2293,7 @@ setWireFit(store.get('rb.wireFit', true) !== false);
 applySplit();
 
 /* ───────────── 정보 · 개발자 · 버그 신고 ───────────── */
-const APP_VERSION = '0.11';
+const APP_VERSION = '0.12';
 const BUG_URL = 'https://github.com/daewonlee81-glitch/roboblock/issues/new';
 const diagErrors = [];
 window.addEventListener('error', e => { diagErrors.push(String(e.message || e.error || e).slice(0, 200)); if (diagErrors.length > 5) diagErrors.shift(); });

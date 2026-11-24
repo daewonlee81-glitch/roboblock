@@ -695,7 +695,8 @@ void updateTFT() {
     oled.setCursor(0, 32);
     oled.printf("FL%+4d  FR%+4d", motorPct[0], motorPct[1]);
     oled.setCursor(0, 42);
-    oled.printf("BL%+4d  BR%+4d", motorPct[2], motorPct[3]);
+    char dtxt[8]; sharpText(dtxt, sizeof(dtxt));
+    oled.printf("BL%+4d  BR%+4d %s", motorPct[2], motorPct[3], dtxt);
     oled.setCursor(0, 52);
     if (webTimedOut) oled.print("SIGNAL LOST - BRAKE");
     else oled.printf("> %s", webText);
@@ -720,7 +721,8 @@ void updateTFT() {
 
   // 속도·방향
   oled.setCursor(0, 52);
-  oled.printf("Spd:%3d%%  Dir:%s", lastSpdPct, lastDirLabel);
+  char dtxt[8]; sharpText(dtxt, sizeof(dtxt));
+  oled.printf("Spd:%3d%% %-5s D%s", lastSpdPct, lastDirLabel, dtxt);
 
   oled.display();
 }
@@ -893,6 +895,7 @@ void leaveWebMode() {
 //   0x04 글자...      : OLED 마지막 줄에 표시 (ASCII, 최대 18자)
 //   0x05 핀 값        : 디지털 출력 (모터·OLED·BOOT·플래시·입력 전용 핀은 거부)
 //   0x06 바퀴 값      : 바퀴 하나만 (0~3, int8 %)
+//   0x08 핀           : Sharp 거리 센서 핀 (32~39 ADC1, 255 = 없음) → NVS에 저장
 //   0x07 핀×8         : 바퀴 핀 설정 FL_IN1 FL_IN2 FR_IN1 FR_IN2 BL_IN1 BL_IN2 BR_IN1 BR_IN2 → 적용하고 NVS에 저장
 bool pinAllowed(int p) {
   if (p < 0 || p > 39) return false;
@@ -913,11 +916,74 @@ bool motorPinOk(int p) {
   return true;
 }
 
+// ---- Sharp GP2Y0A21 적외선 거리 센서 (아날로그, 10~80 cm) ----
+//   배선: Vcc → 5V, GND → GND, Vo → ADC1 핀(기본 GPIO36). Vcc·GND 사이에 10~100 µF 콘덴서 권장.
+//   Bluepad32가 블루투스를 계속 쓰므로 ADC2 핀(0,2,4,12~15,25~27)은 못 쓴다 → 32~39 중에서.
+#define SHARP_SERIAL 1                   // 1이면 시리얼 모니터에 0.5초마다 거리 출력 (센서 확인용)
+int sharpPin = 36;                       // 255 = 센서 없음. 웹 에디터(명령 0x08)에서 바꾸면 NVS에 저장
+uint16_t sharpMv = 0;                    // 출력 전압 (mV)
+uint8_t sharpCm = 0;                     // 0 = 센서 없음, 255 = 80 cm보다 멀다, 그 밖 = cm
+uint16_t sharpBuf[5] = {0};
+uint8_t sharpIdx = 0;
+
+bool sharpPinOk(int p) {
+  if (p == 255) return true;
+  if (p < 32 || p > 39 || p == 37 || p == 38) return false;   // ADC1만 (37·38은 보드에 없음)
+  for (int i = 0; i < 4; i++) if (PIN_OF[i][0] == p || PIN_OF[i][1] == p) return false;
+  return true;
+}
+
+void setupSharp() {
+  if (sharpPin == 255) return;
+  pinMode(sharpPin, INPUT);
+  analogSetPinAttenuation(sharpPin, ADC_11db);   // 0~3.1 V 측정
+}
+
+void loadSharpPin() {
+  prefs.begin("x4wd", true);
+  int v = prefs.getUChar("sharp", 36);
+  prefs.end();
+  if (sharpPinOk(v)) sharpPin = v;
+}
+
+// 8 ms마다 한 번 읽고, 최근 5개의 중앙값으로 튀는 값을 거른다
+void readSharp() {
+  static unsigned long last = 0, lastPrint = 0;
+  if (sharpPin == 255) { sharpCm = 0; sharpMv = 0; return; }
+  if (millis() - last < 8) return;
+  last = millis();
+  sharpBuf[sharpIdx] = analogReadMilliVolts(sharpPin);
+  sharpIdx = (sharpIdx + 1) % 5;
+  uint16_t t[5];
+  memcpy(t, sharpBuf, sizeof(t));
+  for (int i = 1; i < 5; i++) for (int j = i; j > 0 && t[j - 1] > t[j]; j--) { uint16_t x = t[j]; t[j] = t[j - 1]; t[j - 1] = x; }
+  sharpMv = t[2];
+  float v = sharpMv / 1000.0f;
+  if (v < 0.42f) sharpCm = 255;                        // 80 cm보다 멀거나 앞에 아무것도 없음
+  else {
+    float cm = 29.988f * powf(v, -1.173f);             // GP2Y0A21YK0F 근사식
+    sharpCm = (uint8_t)constrain((int)(cm + 0.5f), 10, 80);   // 10 cm 안쪽은 값이 다시 작아지므로 10으로 고정
+  }
+#if SHARP_SERIAL
+  if (millis() - lastPrint >= 500) {
+    lastPrint = millis();
+    if (sharpCm == 255) Serial.printf("Sharp GPIO%d: %.2f V → 80 cm 넘음\n", sharpPin, v);
+    else Serial.printf("Sharp GPIO%d: %.2f V → %d cm\n", sharpPin, v, sharpCm);
+  }
+#endif
+}
+
+void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자
+  if (sharpPin == 255) snprintf(out, n, "--");
+  else if (sharpCm == 255) snprintf(out, n, ">80");
+  else snprintf(out, n, "%dcm", sharpCm);
+}
+
 void buildInfo() {
   snprintf(robotInfo, sizeof(robotInfo),
-           "robot=soccer;fw=roboblock-soccer-0.2;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0",
+           "robot=soccer;fw=roboblock-soccer-0.3;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d",
            robotName, PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
-           PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL);
+           PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL, sharpPin);
 }
 
 void loadMotorPins() {
@@ -984,6 +1050,15 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
     case 0x05:
       if (n >= 3 && pinAllowed(d[1])) { pinMode(d[1], OUTPUT); digitalWrite(d[1], d[2] ? HIGH : LOW); }
       break;
+    case 0x08:
+      if (n >= 2 && sharpPinOk(d[1])) {
+        sharpPin = d[1];
+        prefs.begin("x4wd", false); prefs.putUChar("sharp", sharpPin); prefs.end();
+        setupSharp();
+        buildInfo(); rlSetInfo(robotInfo);
+        Serial.printf("Sharp 센서 핀: %d\n", sharpPin);
+      }
+      break;
     case 0x07:
       if (n >= 9) applyMotorPins(d + 1, true);
       break;
@@ -998,7 +1073,7 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
 // 상태 (20바이트, 10 Hz)
 //   0: 0xA1   1: 모드(0 조종, 1 블록)   2: 플래그(bit0 컨트롤러 연결, bit1 안전 정지, bit2 BOOT 눌림, bit3 BOOT 짧게 눌림)
 //   3~6: 바퀴 출력 FL FR BL BR (int8 %)   7: 제동 비트(FL=bit0 … BR=bit3)
-//   8~9: 순번   10~13: millis()
+//   8~9: 순번   10~13: millis()   14~15: Sharp 전압(mV)   16: Sharp 거리(cm, 0=없음, 255=80 cm 넘음)
 void sendWebStatus() {
   static unsigned long last = 0;
   if (millis() - last < 100) return;
@@ -1014,7 +1089,8 @@ void sendWebStatus() {
   s[8] = statusSeq & 0xFF;  s[9] = statusSeq >> 8;  statusSeq++;
   uint32_t ms = millis();
   memcpy(s + 10, &ms, 4);
-  rlSendStatus(s, 14);
+  s[14] = sharpMv & 0xFF;  s[15] = sharpMv >> 8;  s[16] = sharpCm;
+  rlSendStatus(s, 17);
 }
 
 void startRoboLink() {
@@ -1040,6 +1116,8 @@ void setup() {
   // 가능한 한 빨리 핀을 출력 LOW로 잡아 강제 코스트 시킨다.
   //   핀은 웹 에디터에서 바꿔 저장한 값(NVS)을 먼저 읽는다. 없으면 기본 핀.
   loadMotorPins();
+  loadSharpPin();
+  setupSharp();
   for (int i = 0; i < 4; i++) for (int k = 0; k < 2; k++) { pinMode(PIN_OF[i][k], OUTPUT); digitalWrite(PIN_OF[i][k], LOW); }
 
   Serial.begin(115200);
@@ -1113,6 +1191,7 @@ void loop() {
   }
 
   checkBootButton();             // BOOT 버튼 3초 유지 → 페어링 초기화, 짧게 → 블록의 로봇 버튼
+  readSharp();
   sendWebStatus();
 
 #if USE_TFT
