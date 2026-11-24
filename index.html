@@ -148,6 +148,17 @@ select.warn{border-color:var(--accent)}
 .dev-type{font-size:11px;color:var(--muted)}
 .dev-pins{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 8px;align-items:center;font-size:12px}
 .dev-pins i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.sns{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:center}
+.sns-big{display:flex;flex-direction:column;min-width:120px}
+.sns-big b{font-family:var(--font-mono);font-size:40px;line-height:1.05;font-variant-numeric:tabular-nums}
+.sns-big span{font-family:var(--font-mono);font-size:12.5px;color:var(--muted)}
+.sns-track{position:relative;height:16px;border-radius:8px;background:var(--chip);overflow:hidden}
+.sns-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--spark);opacity:.35;transition:width .1s linear}
+.sns-th{position:absolute;top:0;bottom:0;left:87.5%;width:2px;background:var(--stop)}
+.sns-dot{position:absolute;top:2px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:var(--spark);left:0;transition:left .1s linear}
+.sns-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px;font-variant-numeric:tabular-nums}
+#snsSpark{width:100%;height:70px;display:block;border-radius:8px;background:var(--ws-bg)}
+@media (max-width:480px){ .sns{grid-template-columns:minmax(0,1fr)} }
 .mtrs{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px}
 .mtr{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
 .mtr.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
@@ -249,6 +260,19 @@ select.warn{border-color:var(--accent)}
       <div class="card" id="connectCard" hidden>
         <div class="head"><h2>로봇 연결</h2><button type="button" class="btn sm" id="connectClose">닫기</button></div>
         <div class="note" id="connectBody"></div>
+      </div>
+
+      <div class="card" id="sensorCard" hidden>
+        <div class="head"><h2>거리 센서 확인 · Sharp GP2Y0A21</h2><span class="pill" id="snsState">화면 미리보기</span></div>
+        <div class="sns">
+          <div class="sns-big" aria-live="polite"><b id="snsCm">--</b><span id="snsSub">--</span></div>
+          <div class="sns-gauge">
+            <div class="sns-track" aria-hidden="true"><div class="sns-fill" id="snsFill"></div><div class="sns-th" title="상대 감지 기준 70 cm"></div><div class="sns-dot" id="snsDot"></div></div>
+            <div class="sns-scale"><span>0</span><span>10</span><span>20</span><span>30</span><span>40</span><span>50</span><span>60</span><span>70</span><span>80 cm</span></div>
+          </div>
+        </div>
+        <canvas id="snsSpark" width="600" height="70" aria-label="최근 10초 거리 그래프"></canvas>
+        <div class="meta" id="snsHint"></div>
       </div>
 
       <div class="card" id="wireCard">
@@ -427,7 +451,7 @@ const DEVICE_TYPES = {
   buzzer:  {label:'부저', short:'부저', defaultName:'부저', roles:[['SIG','pwm']], pwmUse:1, power:'GND 공통'},
   button:  {label:'버튼', short:'버튼 · 풀업 입력', defaultName:'버튼', roles:[['SIG','in']], power:'다른 쪽은 GND'},
   irfloor: {label:'IR 반사 바닥 센서 (TCRT5000)', short:'IR 반사 · 아날로그', defaultName:'바닥 센서', roles:[['AO','adc']], power:'VCC 3.3 V', sensor:{min:0, max:100, def:50, unit:'', name:'밝기'}},
-  sharp:   {label:'Sharp GP2Y0A21 거리', short:'Sharp 거리 · 아날로그', defaultName:'Sharp 거리', roles:[['OUT','adc']], power:'VCC 5 V', sensor:{min:10, max:80, def:60, unit:'cm', name:'거리'}},
+  sharp:   {label:'Sharp GP2Y0A21 거리', short:'Sharp 거리 · 아날로그', defaultName:'Sharp 거리', roles:[['OUT','adc']], power:'VCC 5 V', sensor:{min:10, max:80, def:80, unit:'cm', name:'거리'}},
   hcsr04:  {label:'초음파 HC-SR04', short:'초음파 HC-SR04', defaultName:'초음파', roles:[['TRIG','out'],['ECHO','in']], power:'VCC 5 V · ECHO 분압', sensor:{min:2, max:400, def:150, unit:'cm', name:'거리'}},
   e18:     {label:'적외선 근접 E18-D80NK', short:'적외선 근접 · 디지털', defaultName:'근접 센서', roles:[['OUT','in']], power:'VCC 5 V · 출력 풀업', sensor:{min:0, max:1, def:0, unit:'', name:'감지', bool:true}},
   tfluna:  {label:'TF-Luna 레이저 거리 (I²C)', short:'TF-Luna 레이저 · I²C', defaultName:'레이저 거리', roles:[['SDA','sda'],['SCL','scl']], addr:'0x10', power:'VCC 5 V', sensor:{min:20, max:300, def:150, unit:'cm', name:'거리'}},
@@ -456,8 +480,9 @@ function defaultDevices(key){
     {id:'pump', type:'mosfet', name:'진공펌프', tag:'pump', pins:{GATE:16}}, {id:'valve', type:'mosfet', name:'솔레노이드 밸브', tag:'valve', pins:{GATE:17}},
     {id:'oled', type:'oled', name:'OLED (Wire1)', pins:{SDA:13, SCL:14}}, boot];
   if (key === 'sumo') return [...drive,
-    {id:'oled', type:'oled', name:'OLED', pins:{SDA:16, SCL:17}}, {id:'luna', type:'tfluna', name:'앞 거리 (TF-Luna)', pins:{SDA:16, SCL:17}},
-    {id:'flL', type:'irfloor', name:'바닥 왼쪽', side:'L', pins:{AO:34}}, {id:'flR', type:'irfloor', name:'바닥 오른쪽', side:'R', pins:{AO:36}}, boot];
+    {id:'oled', type:'oled', name:'OLED', pins:{SDA:16, SCL:17}},
+    {id:'sharp', type:'sharp', name:'앞 거리 (Sharp)', pins:{OUT:36}},          // GP2Y0A21, 보드 인쇄 SVP
+    {id:'flL', type:'irfloor', name:'바닥 왼쪽', side:'L', pins:{AO:34}}, {id:'flR', type:'irfloor', name:'바닥 오른쪽', side:'R', pins:{AO:35}}, boot];
   return [...drive, {id:'oled', type:'oled', name:'OLED', pins:{SDA:16, SCL:17}}, boot];
 }
 
@@ -478,10 +503,11 @@ const pad = {LX:0, LY:0, RX:0, RY:0, LT:0, RT:0, btn:new Set(), connected:true};
 let bootDownUntil = 0;
 
 function loadDevices(){
-  const saved = store.get('rb.devices4.' + robotKey, null);
+  const saved = store.get(devKey(robotKey), null);
   devices = Array.isArray(saved) && saved.length && saved.every(d => DEVICE_TYPES[d.type]) ? saved : defaultDevices(robotKey);
 }
-function saveDevices(){ store.set('rb.devices4.' + robotKey, devices); }
+function devKey(k){ return (k === 'sumo' ? 'rb.devices5.' : 'rb.devices4.') + k; }   // 스모는 Sharp 거리 센서 구성으로 새로 시작
+function saveDevices(){ store.set(devKey(robotKey), devices); }
 function devById(id){ return devices.find(d => d.id === id); }
 function deviceUsingPin(p){ for (const d of devices) for (const r in d.pins) if (d.pins[r] === p) return [d, r]; return null; }
 function devOptions(types){
@@ -1422,7 +1448,7 @@ function loop(now){
   const dt = Math.min(0.05, (now - lastT)/1000); lastT = now;
   tick(dt, now);
   linkPump(now);
-  if (now - lastUi >= 80){ lastUi = now; updateSignals(); updateMonitor(now); updatePanels(); updateMotorPanel(); }
+  if (now - lastUi >= 80){ lastUi = now; updateSignals(); updateMonitor(now); updatePanels(); updateMotorPanel(); updateSensorCard(now); }
   requestAnimationFrame(loop);
 }
 function updatePanels(){
@@ -1997,7 +2023,7 @@ function onStatus(dv){
   if (dv.byteLength < 8 || dv.getUint8(0) !== 0xA1) return;
   const flags = dv.getUint8(2), bm = dv.getUint8(7);
   POS4.forEach((pos, i) => { link.real[pos] = {cmd: dv.getInt8(3 + i), brake: !!(bm & (1 << i))}; });
-  const was = link.flags; link.flags = flags; link.lastStatus = performance.now();
+  const was = link.flags; link.flags = flags; link.lastStatus = performance.now(); noteStatusArrival();
   if (flags & 4) bootDownUntil = performance.now() + 150;
   if (flags & 8){ if (!run) startRun(); else trigger('rb_button'); }
   if ((flags & 2) && !(was & 2) && run) setMsg('로봇이 0.5초 동안 명령을 못 받아 스스로 제동했습니다. 브라우저 탭을 앞에 두세요.');
@@ -2020,8 +2046,8 @@ function syncFromInfo(info){
   if (o && info.oled){ const [a, b] = info.oled.split(',').map(Number); if (o.pins.SDA !== a || o.pins.SCL !== b){ o.pins.SDA = a; o.pins.SCL = b; changed = true; } }
   if (info.sharp && info.sharp !== '255'){
     const pin = Number(info.sharp), sh = devices.find(d => d.type === 'sharp');
-    if (!sh){ devices.push({id:'sharp', type:'sharp', name:'앞 거리 (Sharp)', pins:{OUT:pin}}); changed = true; }
-    else if (sh.pins.OUT !== pin){ sh.pins.OUT = pin; changed = true; }
+    if (!sh && robotKey === 'sumo'){ devices.push({id:'sharp', type:'sharp', name:'앞 거리 (Sharp)', pins:{OUT:pin}}); changed = true; }   // 거리 센서는 스모 장치
+    else if (sh && sh.pins.OUT !== pin){ sh.pins.OUT = pin; changed = true; }
   }
   if (changed){ saveDevices(); renderAll(); }
   return changed;
@@ -2137,7 +2163,7 @@ function applyLevel(lv){
 const addSel = $('#addType');
 for (const t of ADDABLE){ const o = document.createElement('option'); o.value = t; o.textContent = DEVICE_TYPES[t].label; addSel.appendChild(o); }
 $('#addDev').addEventListener('click', () => addDevice(addSel.value));
-$('#devReset').addEventListener('click', () => { store.set('rb.devices4.' + robotKey, null); loadDevices(); resetRuntime(); focusDev = null; stopDrive(); renderAll(); setMsg('기본 구성으로 되돌렸습니다.'); });
+$('#devReset').addEventListener('click', () => { store.set(devKey(robotKey), null); loadDevices(); resetRuntime(); focusDev = null; stopDrive(); renderAll(); setMsg('기본 구성으로 되돌렸습니다.'); });
 document.querySelectorAll('#robotSeg button').forEach(b => b.addEventListener('click', () => { if (b.dataset.robot !== robotKey) applyRobot(b.dataset.robot, true); }));
 document.querySelectorAll('#levelSeg button').forEach(b => b.addEventListener('click', () => applyLevel(Number(b.dataset.level))));
 $('#runBtn').addEventListener('click', startRun);
@@ -2219,6 +2245,61 @@ document.addEventListener('keyup', e => {
   if (hats.length){ setStatus('실행 중', 'run'); hats.forEach(h => runTask(h)); }
 });
 window.addEventListener('blur', () => keysDown.clear());
+
+/* ───────────── 거리 센서 실시간 확인 ─────────────
+   스모의 Sharp 거리 센서가 실제로 작동하는지 한눈에 보여 준다.
+   로봇과 연결되면 로봇이 10 Hz로 보내는 값(전압·cm)을 쓰고, 아니면 모니터의 가상 입력 값을 쓴다. */
+const sns = {hist:[], lowSince:0, arrivals:[]};
+function sharpDev(){ return devices.find(d => d.type === 'sharp'); }
+function noteStatusArrival(){ const t = performance.now(); sns.arrivals.push(t); while (sns.arrivals.length && t - sns.arrivals[0] > 2000) sns.arrivals.shift(); }
+function updateSensorCard(now){
+  const card = $('#sensorCard'), d = sharpDev();
+  const show = !!d && (robotKey === 'sumo' || isRealSensor(d));
+  if (card.hidden === show) card.hidden = !show;
+  if (!show) return;
+  const s = R(d), real = isRealSensor(d), far = !!s.far, cm = s.value;
+  const mv = real ? (s.mv || 0) : null;
+  const stale = real && now - link.lastStatus > 1500;
+  if (real && mv < 150){ if (!sns.lowSince) sns.lowSince = now; } else sns.lowSince = 0;
+  const noSignal = real && sns.lowSince && now - sns.lowSince > 1000;
+  const hz = real ? sns.arrivals.filter(t => now - t <= 1000).length : 0;
+  let state, kind, hint;
+  if (!link.on){ state = '화면 미리보기'; kind = ''; hint = '로봇을 연결하면 센서의 실제 값이 1초에 10번 들어옵니다. 지금 숫자는 실시간 모니터의 가상 입력 슬라이더 값입니다.'; }
+  else if (!link.info.sharp || link.info.sharp === '255'){ state = '펌웨어에 센서 없음'; kind = 'err'; hint = '로봇 펌웨어가 거리 센서를 읽지 않습니다. 최신 soccer_roboblock 펌웨어를 올려 주세요.'; }
+  else if (!real){ state = '핀이 다름'; kind = 'wait'; hint = `로봇은 GPIO ${link.info.sharp}에서 읽는데 배선도의 센서는 GPIO ${d.pins.OUT}입니다. 장치 핀을 맞추거나 "로봇에 핀 적용·저장"을 누르세요.`; }
+  else if (stale){ state = '신호 끊김'; kind = 'err'; hint = '로봇에서 1.5초 넘게 값이 오지 않습니다. 로봇 전원과 블루투스 연결을 확인하세요.'; }
+  else if (noSignal){ state = '센서 신호 없음'; kind = 'err'; hint = `전압이 0 V 가까이입니다. Vo가 SVP(GPIO ${d.pins.OUT})에, Vcc가 5V에, GND가 공통으로 연결됐는지 확인하세요.`; }
+  else if (far){ state = '작동 중 · 앞에 없음'; kind = 'run'; hint = `80 cm 안에 물체가 없습니다. 손을 센서 앞 10~80 cm에 대 보세요. 갱신 ${hz}회/초.`; }
+  else { state = '작동 중'; kind = 'run'; hint = (cm < 70 ? `상대 보임 (70 cm 안) — "상대가 보이나?" 블록이 참입니다.` : '70 cm보다 멀어 "상대가 보이나?"는 거짓입니다.') + ` 갱신 ${hz}회/초.`; }
+  const pill = $('#snsState');
+  if (pill.textContent !== state){ pill.textContent = state; pill.className = 'pill' + (kind ? ' ' + kind : ''); }
+  const hintEl = $('#snsHint'); if (hintEl.textContent !== hint) hintEl.textContent = hint;
+  $('#snsCm').textContent = (real && (noSignal || stale)) ? '--' : far ? '>80 cm' : `${Math.round(cm)} cm`;
+  $('#snsSub').textContent = real ? `${(mv/1000).toFixed(2)} V · GPIO ${d.pins.OUT} (SVP)` : `가상 값 · GPIO ${d.pins.OUT}`;
+  const shown = far ? 80 : Math.max(0, Math.min(80, cm));
+  $('#snsFill').style.width = (shown/80*100) + '%';
+  $('#snsDot').style.left = (shown/80*100) + '%';
+  // 10초 그래프 (10 Hz)
+  if (!sns.lastSample || now - sns.lastSample >= 100){
+    sns.lastSample = now;
+    sns.hist.push((real && (noSignal || stale)) ? null : (far ? 85 : shown)); if (sns.hist.length > 100) sns.hist.shift();
+    const cv = $('#snsSpark'), c = cv.getContext('2d'), css = getComputedStyle(document.documentElement);
+    const dpr = window.devicePixelRatio || 1, w = Math.max(100, cv.clientWidth), h = 70;
+    if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){ cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr); }
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    const Y = v => 6 + (v/85)*(h - 12);
+    c.strokeStyle = css.getPropertyValue('--line').trim(); c.lineWidth = 1;
+    for (const g of [20, 40, 60]){ c.beginPath(); c.moveTo(0, Y(g)); c.lineTo(w, Y(g)); c.stroke(); }
+    c.strokeStyle = css.getPropertyValue('--stop').trim(); c.setLineDash([5, 4]); c.beginPath(); c.moveTo(0, Y(70)); c.lineTo(w, Y(70)); c.stroke(); c.setLineDash([]);
+    c.strokeStyle = css.getPropertyValue('--spark').trim(); c.lineWidth = 2; c.beginPath();
+    let pen = false;
+    sns.hist.forEach((v, i) => { const x = (i + 100 - sns.hist.length)/99*w; if (v == null){ pen = false; return; } pen ? c.lineTo(x, Y(v)) : c.moveTo(x, Y(v)); pen = true; });
+    c.stroke();
+    c.fillStyle = css.getPropertyValue('--muted').trim(); c.font = '11px ' + FONT_FAMILY;
+    c.fillText('가까움', 4, 14); c.fillText('멂', 4, h - 4); c.fillText('70 cm', w - 44, Y(70) - 3);
+  }
+}
 /* ───────────── 창 크기 조절 (블록 창 ↔ 오른쪽 창) ─────────────
    가운데 막대를 끌면 넓이가 바뀐다. 폰처럼 위아래로 쌓인 화면에서는 블록 창의 높이가 바뀐다.
    키보드 ←→(↑↓)로도 움직이고, 두 번 누르면 원래대로. */
@@ -2293,7 +2374,7 @@ setWireFit(store.get('rb.wireFit', true) !== false);
 applySplit();
 
 /* ───────────── 정보 · 개발자 · 버그 신고 ───────────── */
-const APP_VERSION = '0.12';
+const APP_VERSION = '0.13';
 const BUG_URL = 'https://github.com/daewonlee81-glitch/roboblock/issues/new';
 const diagErrors = [];
 window.addEventListener('error', e => { diagErrors.push(String(e.message || e.error || e).slice(0, 200)); if (diagErrors.length > 5) diagErrors.shift(); });
