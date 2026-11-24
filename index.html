@@ -81,6 +81,8 @@ dialog.about::backdrop{background:rgba(10,14,20,.55)}
 .btn.run{background:var(--run);border-color:var(--run);color:var(--on-run)}
 .btn.stop{background:var(--stop);border-color:var(--stop);color:var(--on-stop)}
 .btn.sm{padding:3px 9px;font-size:12px}
+.sdl{font-size:12px;color:var(--muted)}
+#startDelay{font:inherit;font-size:13px;padding:6px 6px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
 .btn.unlink{border-color:var(--stop);color:var(--stop)}
 .btn.unlink:hover{background:var(--stop);color:var(--on-stop)}
 .btn.linked{background:var(--pill-run);border-color:var(--run);color:var(--pill-run-ink)}
@@ -157,6 +159,13 @@ select.warn{border-color:var(--accent)}
 .sns-th{position:absolute;top:0;bottom:0;left:87.5%;width:2px;background:var(--stop)}
 .sns-dot{position:absolute;top:2px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:var(--spark);left:0;transition:left .1s linear}
 .sns-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px;font-variant-numeric:tabular-nums}
+.sns-help{font-size:13px}
+.sns-help summary{cursor:pointer;font-weight:600;color:var(--spark)}
+.sns-help ol{margin:8px 0;padding-left:20px;display:flex;flex-direction:column;gap:6px;line-height:1.55}
+.sns-help .tbl{overflow-x:auto}
+.sns-ref{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;min-width:440px}
+.sns-ref th,.sns-ref td{border:1px solid var(--line);padding:4px 7px;text-align:center;white-space:nowrap}
+.sns-ref thead th{color:var(--muted);font-weight:600}
 #snsSpark{width:100%;height:70px;display:block;border-radius:8px;background:var(--ws-bg)}
 @media (max-width:480px){ .sns{grid-template-columns:minmax(0,1fr)} }
 .mtrs{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px}
@@ -237,6 +246,7 @@ select.warn{border-color:var(--accent)}
       </div>
     </div>
     <div class="group">
+      <label class="sdl" for="startDelay" title="실행을 누른 뒤 로봇이 출발하기까지 기다리는 시간">출발</label><select id="startDelay" aria-label="출발 대기 시간"><option value="0">바로</option><option value="1">1초 뒤</option><option value="3">3초 뒤</option><option value="5">5초 뒤</option></select>
       <button type="button" class="btn run" id="runBtn">▶ 실행</button>
       <button type="button" class="btn stop" id="stopBtn" disabled>■ 정지</button>
       <button type="button" class="btn" id="connectBtn">로봇 연결</button>
@@ -273,6 +283,16 @@ select.warn{border-color:var(--accent)}
         </div>
         <canvas id="snsSpark" width="600" height="70" aria-label="최근 10초 거리 그래프"></canvas>
         <div class="meta" id="snsHint"></div>
+        <details class="sns-help">
+          <summary>값이 이상할 때 (예: 11~24 cm만 나옴)</summary>
+          <ol>
+            <li><b>천장이나 빈 공간</b>을 향하게 들어 보세요. <b>&gt;80 cm, 0.3~0.4 V</b>가 나와야 정상입니다. 이때는 정상인데 로봇에 달면 24 cm 근처에 머문다면 센서가 <b>바닥이나 로봇 몸체</b>를 보고 있는 것입니다. 센서를 조금 위로 기울이세요.</li>
+            <li>빈 공간을 향해도 1 V 넘게 나오면 배선 문제입니다. 센서 <b>GND를 ESP32 GND(공통 GND)</b>에, Vcc를 <b>5V</b>에 연결하고, Vcc·GND 사이에 <b>10~100 µF</b> 콘덴서를 센서 가까이 다세요. 센서 Vcc 전압이 4.5~5.5 V인지 재 보세요.</li>
+            <li>흰 종이나 상자를 대고 아래 전압과 비교하세요 (데이터시트 대표값).</li>
+          </ol>
+          <div class="tbl"><table class="sns-ref"><thead><tr><th>거리</th><th>10 cm</th><th>15</th><th>20</th><th>30</th><th>40</th><th>50</th><th>60</th><th>80</th></tr></thead>
+          <tbody><tr><th>전압</th><td>2.3 V</td><td>1.65</td><td>1.3</td><td>0.92</td><td>0.75</td><td>0.6</td><td>0.52</td><td>0.4</td></tr></tbody></table></div>
+        </details>
       </div>
 
       <div class="card" id="wireCard">
@@ -414,8 +434,8 @@ const FONT_FAMILY = "'IBM Plex Sans KR','Apple SD Gothic Neo','Malgun Gothic',sa
 
 /* ───────────── 로봇 프로필 ───────────── */
 const ROBOTS = {
-  soccer:{ label:'축구로봇', tag:'RB-07', vmax:80, wid:18, mecanum:false, arm:false, delay:1000 },
-  middle:{ label:'미들봇',   tag:'MB-02', vmax:50, wid:26, mecanum:true,  arm:true,  delay:1000, battery:'3S LiPo 11.1 V (12 V 레일)', servoPower:'6 V 벅 (XL4015)' },
+  soccer:{ label:'축구로봇', tag:'RB-07', vmax:80, wid:18, mecanum:false, arm:false, delay:0 },
+  middle:{ label:'미들봇',   tag:'MB-02', vmax:50, wid:26, mecanum:true,  arm:true,  delay:0, battery:'3S LiPo 11.1 V (12 V 레일)', servoPower:'6 V 벅 (XL4015)' },
   sumo:  { label:'스모',     tag:'SM-03', vmax:55, wid:18, mecanum:false, arm:false, delay:3000 }
 };
 const CELL = 20; // 1칸 = 20 cm (교사가 보정하는 값)
@@ -1658,8 +1678,9 @@ async function startRun(){
   run = {stopped:false, tasks:new Set(), vars:new Map(), frames:[], manual:false, padOwned:['rb_pad_pressed','rb_pad_axis','rb_pad_connected'].some(t => types.has(t))};
   pinBlockSig.clear(); oledText = ''; stopDrive();
   showWholeWiring();
-  setStatus('준비', 'wait'); setButtons(true); setMsg(robotKey === 'sumo' ? '대회 규정대로 3초 뒤 출발합니다.' : '1초 뒤 출발합니다.');
-  const delay = ROBOTS[robotKey].delay, ts = performance.now();
+  const delay = startDelayMs(), ts = performance.now();
+  setButtons(true);
+  if (delay > 0){ setStatus('준비', 'wait'); setMsg(`${delay/1000}초 뒤 출발합니다.` + (robotKey === 'sumo' ? ' (스모 대회는 시작 신호 뒤 기다렸다 출발)' : '')); }
   countdown = delay/1000;
   try{ while (performance.now() - ts < delay){ await frame(); countdown = Math.max(0, (delay - (performance.now() - ts))/1000); } }
   catch(e){ return; }
@@ -2142,6 +2163,7 @@ function applyRobot(key, fromUser){
   document.querySelectorAll('#robotSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.robot === key)));
   renderLinkUi();
   $('#padCard').hidden = key === 'sumo';
+  syncStartDelay();
   loadDevices(); resetRuntime();
   ws.updateToolbox(buildToolbox(robotKey, level));
   loadWorkspace(key);
@@ -2300,6 +2322,13 @@ function updateSensorCard(now){
     c.fillText('가까움', 4, 14); c.fillText('멂', 4, h - 4); c.fillText('70 cm', w - 44, Y(70) - 3);
   }
 }
+
+/* ───────────── 출발 대기 시간 ─────────────
+   실행을 누른 뒤 출발까지 기다리는 시간. 축구로봇·미들봇은 바로, 스모는 대회처럼 3초가 기본. 로봇마다 기억한다. */
+function startDelaySec(){ const v = store.get('rb.delay.' + robotKey, null); return v == null ? ROBOTS[robotKey].delay/1000 : Number(v); }
+function startDelayMs(){ return Math.max(0, startDelaySec())*1000; }
+function syncStartDelay(){ $('#startDelay').value = String(startDelaySec()); }
+$('#startDelay').addEventListener('change', () => { store.set('rb.delay.' + robotKey, Number($('#startDelay').value)); $('#startDelay').blur(); setMsg(Number($('#startDelay').value) ? `실행을 누르면 ${$('#startDelay').value}초 뒤 출발합니다.` : '실행을 누르면 바로 출발합니다.'); });
 /* ───────────── 창 크기 조절 (블록 창 ↔ 오른쪽 창) ─────────────
    가운데 막대를 끌면 넓이가 바뀐다. 폰처럼 위아래로 쌓인 화면에서는 블록 창의 높이가 바뀐다.
    키보드 ←→(↑↓)로도 움직이고, 두 번 누르면 원래대로. */
@@ -2374,7 +2403,7 @@ setWireFit(store.get('rb.wireFit', true) !== false);
 applySplit();
 
 /* ───────────── 정보 · 개발자 · 버그 신고 ───────────── */
-const APP_VERSION = '0.13';
+const APP_VERSION = '0.14';
 const BUG_URL = 'https://github.com/daewonlee81-glitch/roboblock/issues/new';
 const diagErrors = [];
 window.addEventListener('error', e => { diagErrors.push(String(e.message || e.error || e).slice(0, 200)); if (diagErrors.length > 5) diagErrors.shift(); });
