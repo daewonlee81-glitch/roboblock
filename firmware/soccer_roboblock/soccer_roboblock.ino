@@ -943,6 +943,7 @@ void leaveWebMode() {
 //   0x05 핀 값        : 디지털 출력 (모터·OLED·BOOT·플래시·입력 전용 핀은 거부)
 //   0x06 바퀴 값      : 바퀴 하나만 (0~3, int8 %)
 //   0x08 핀 [핀 핀]   : Sharp 거리 센서 핀 앞 [왼쪽 오른쪽] (32~39 ADC1, 255 = 없음) → NVS에 저장
+//   0x0C 핀 핀        : 바닥 IR 센서(DO) 핀 왼쪽 오른쪽 (255 = 안 씀) → NVS에 저장
 //   0x0B 단계         : 바닥 색 보정 (1 흰색 저장, 2 검정 저장, 0 지우기) → NVS에 저장
 //   0x0A 핀×3 극성    : 상대 감지 센서 핀 왼·가운데·오른 (255 = 안 씀), 극성(1 = 감지 때 HIGH) → NVS에 저장
 //   0x09 단계 [센서]  : Sharp 보정, 센서 0 앞 1 왼쪽 2 오른쪽 (0 = 지우기, 1 = 지금 값을 '빈 공간', 2 = 지금 값을 '흰 종이 20 cm') → NVS에 저장
@@ -1092,17 +1093,59 @@ void readSharp() {
 //   출력 HIGH가 5 V 가까이라 ESP32에 바로 꽂지 말고 레벨 변환기(BSS138 모듈) 등을 거친다.
 //   GP2Y0D8xx 계열(5~15 cm)처럼 감지 때 LOW인 센서는 oppActiveHigh = 0.
 const char* OPP_NAME[3] = {"L", "C", "R"};
-int oppPin[3] = {255, 255, 255};         // 255 = 안 씀 (기본: 안 씀, 18·19·23 권장). 웹 에디터(명령 0x0A)에서 바꾸면 NVS에 저장
+int oppPin[3] = {255, 255, 255};         // 255 = 안 씀 (기본: 안 씀. 18·19는 바닥 IR이 쓰므로 23·5·15 등). 웹 에디터(명령 0x0A)에서 바꾸면 NVS에 저장
 bool oppActiveHigh = true;
 uint8_t oppMask = 0;                     // bit0 왼쪽, bit1 가운데, bit2 오른쪽 (감지 = 1)
 uint8_t oppPrev = 0;
 
-bool oppPinOk(int p) {
-  if (p == 255) return true;
+// ---- 바닥 IR 센서 2개: HW-870 (TCRT5000 + LM393 비교기) 디지털 출력 DO ----
+//   VCC → 3.3 V (확장 보드 V 핀, 점퍼 3.3), GND → G, DO → GPIO 18(왼쪽) · 19(오른쪽), AO는 비워 둔다.
+//   흰 바닥(빛이 많이 돌아옴)이면 DO = LOW, 모듈의 아래 LED가 켜진다. 파란 가변저항으로 기준을 맞춘다.
+//   VCC를 5 V로 주면 DO도 5 V가 되므로 3.3 V로 준다.
+int floorPin[2] = {18, 19};              // 왼쪽, 오른쪽 (255 = 안 씀). 웹 에디터(명령 0x0C)에서 바꾸면 NVS에 저장
+uint8_t floorMask = 0;                   // bit0 왼쪽 흰색, bit1 오른쪽 흰색
+uint8_t floorPrev = 0;
+
+// 디지털 입력으로 쓸 수 있는 핀인가 (모터·OLED·Sharp·색 센서·부팅 핀과 겹치지 않게)
+bool inPinOk(int p) {
   if (p < 0 || p > 39 || (p >= 6 && p <= 11) || p == 37 || p == 38) return false;
-  if (p == 0 || p == 1 || p == 3 || p == OLED_SDA || p == OLED_SCL || p == sharpS[0].pin || p == sharpS[1].pin || p == sharpS[2].pin || p == COLOR_R_SDA || p == COLOR_R_SCL) return false;
+  if (p == 0 || p == 1 || p == 3 || p == 12 || p == OLED_SDA || p == OLED_SCL || p == sharpS[0].pin || p == sharpS[1].pin || p == sharpS[2].pin || p == COLOR_R_SDA || p == COLOR_R_SCL) return false;
   for (int i = 0; i < 4; i++) if (PIN_OF[i][0] == p || PIN_OF[i][1] == p) return false;
   return true;
+}
+bool oppPinOk(int p) {
+  if (p == 255) return true;
+  return inPinOk(p) && p != floorPin[0] && p != floorPin[1];
+}
+bool floorPinOk(int p) {
+  if (p == 255) return true;
+  return inPinOk(p) && p != oppPin[0] && p != oppPin[1] && p != oppPin[2];
+}
+void setupFloor() {
+  for (int i = 0; i < 2; i++) if (floorPin[i] != 255) pinMode(floorPin[i], floorPin[i] >= 34 ? INPUT : INPUT_PULLUP);   // 모듈에 풀업이 있지만 선이 빠졌을 때를 대비
+}
+void loadFloorPins() {
+  uint8_t b[2];
+  prefs.begin("x4wd", true);
+  bool ok = prefs.getBytesLength("flr") == 2 && prefs.getBytes("flr", b, 2) == 2;
+  prefs.end();
+  if (ok && floorPinOk(b[0]) && floorPinOk(b[1]) && (b[0] != b[1] || b[0] == 255)) { floorPin[0] = b[0]; floorPin[1] = b[1]; }
+  for (int i = 0; i < 2; i++) if (!floorPinOk(floorPin[i])) floorPin[i] = 255;
+}
+void readFloor() {
+  static unsigned long last = 0;
+  if (millis() - last < 3) return;
+  last = millis();
+  uint8_t now = 0;
+  for (int i = 0; i < 2; i++) if (floorPin[i] != 255 && digitalRead(floorPin[i]) == LOW) now |= 1 << i;
+  uint8_t stable = (now & floorPrev) | (floorMask & (now | floorPrev));   // 두 번 연속 같으면 반영
+  floorPrev = now;
+  if (stable != floorMask) {
+    floorMask = stable;
+#if SHARP_SERIAL
+    Serial.printf("바닥 IR: 왼쪽 %s  오른쪽 %s\n", floorMask & 1 ? "흰색" : "검정", floorMask & 2 ? "흰색" : "검정");
+#endif
+  }
 }
 
 void setupOpp() {
@@ -1262,7 +1305,13 @@ void sendColorStatus() {
 
 // OLED: 바닥 색 두 글자 (K 검정 W 흰색 R 빨강 Y 노랑 G 초록 B 파랑, - 센서 없음)
 void drawColor(int y) {
-  if (!colorS[0].ok && !colorS[1].ok) return;
+  if (!colorS[0].ok && !colorS[1].ok) {           // 색 센서가 없으면 바닥 IR (W 흰색, K 검정)
+    if (floorPin[0] == 255 && floorPin[1] == 255) return;
+    oled.setCursor(116, y);
+    oled.print(floorPin[0] == 255 ? "-" : floorMask & 1 ? "W" : "K");
+    oled.print(floorPin[1] == 255 ? "-" : floorMask & 2 ? "W" : "K");
+    return;
+  }
   oled.setCursor(116, y);
   oled.print(COLOR_NAME[colorS[0].ok ? colorS[0].color : 0]);
   oled.print(COLOR_NAME[colorS[1].ok ? colorS[1].color : 0]);
@@ -1288,13 +1337,13 @@ void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자 
 
 void buildInfo() {
   snprintf(robotInfo, sizeof(robotInfo),
-           "robot=soccer;fw=roboblock-soccer-0.6;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d",
+           "robot=soccer;fw=roboblock-soccer-0.7;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d;flr=%d,%d",
            robotName, PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
            PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL,
            sharpS[0].pin, sharpS[0].a, sharpS[0].b, sharpS[0].farMv, sharpS[0].c20Mv,
            sharpS[1].pin, sharpS[1].a, sharpS[1].b, sharpS[1].farMv, sharpS[1].c20Mv,
            sharpS[2].pin, sharpS[2].a, sharpS[2].b, sharpS[2].farMv, sharpS[2].c20Mv, oppPin[0], oppPin[1], oppPin[2], oppActiveHigh ? 1 : 0,
-           OLED_SDA, OLED_SCL, COLOR_R_SDA, COLOR_R_SCL, colorS[0].ok ? 1 : 0, colorS[1].ok ? 1 : 0);
+           OLED_SDA, OLED_SCL, COLOR_R_SDA, COLOR_R_SCL, colorS[0].ok ? 1 : 0, colorS[1].ok ? 1 : 0, floorPin[0], floorPin[1]);
 }
 
 void loadMotorPins() {
@@ -1361,6 +1410,19 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
     case 0x05:
       if (n >= 3 && pinAllowed(d[1])) { pinMode(d[1], OUTPUT); digitalWrite(d[1], d[2] ? HIGH : LOW); }
       break;
+    case 0x0C:
+      if (n >= 3) {
+        int old0 = floorPin[0], old1 = floorPin[1];
+        floorPin[0] = floorPin[1] = 255;
+        if (floorPinOk(d[1]) && floorPinOk(d[2]) && (d[1] != d[2] || d[1] == 255)) { floorPin[0] = d[1]; floorPin[1] = d[2]; }
+        else { floorPin[0] = old0; floorPin[1] = old1; }
+        uint8_t b[2] = {(uint8_t)floorPin[0], (uint8_t)floorPin[1]};
+        prefs.begin("x4wd", false); prefs.putBytes("flr", b, 2); prefs.end();
+        setupFloor(); floorMask = 0; floorPrev = 0;
+        buildInfo(); rlSetInfo(robotInfo);
+        Serial.printf("바닥 IR 핀: 왼쪽 %d  오른쪽 %d\n", floorPin[0], floorPin[1]);
+      }
+      break;
     case 0x0B:
       if (n >= 2) { colorCalStep(d[1]); buildInfo(); rlSetInfo(robotInfo); }
       break;
@@ -1396,6 +1458,7 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
         saveSharpPins();
         setupSharp();
         for (int i = 0; i < 3; i++) if (!oppPinOk(oppPin[i])) { oppPin[i] = 255; setupOpp(); }
+        for (int i = 0; i < 2; i++) if (!floorPinOk(floorPin[i])) { floorPin[i] = 255; setupFloor(); }
         buildInfo(); rlSetInfo(robotInfo);
         Serial.printf("Sharp 센서 핀: 앞 %d  왼쪽 %d  오른쪽 %d\n", sharpS[0].pin, sharpS[1].pin, sharpS[2].pin);
       }
@@ -1405,6 +1468,8 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
         applyMotorPins(d + 1, true);
         bool clash = false;                 // 모터와 겹친 상대 감지 핀은 끈다
         for (int i = 0; i < 3; i++) if (!oppPinOk(oppPin[i])) { oppPin[i] = 255; clash = true; }
+        for (int i = 0; i < 2; i++) if (!floorPinOk(floorPin[i])) { floorPin[i] = 255; clash = true; }
+        if (clash) setupFloor();
         if (clash) { setupOpp(); buildInfo(); rlSetInfo(robotInfo); }
       }
       break;
@@ -1419,7 +1484,7 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
 // 상태 (20바이트, 10 Hz)
 //   0: 0xA1   1: 모드(0 조종, 1 블록)   2: 플래그(bit0 컨트롤러 연결, bit1 안전 정지, bit2 BOOT 눌림, bit3 BOOT 짧게 눌림)
 //   3~6: 바퀴 출력 FL FR BL BR (int8 %)   7: 제동 비트(FL=bit0 … BR=bit3)
-//   8~9: 순번   10~13: millis()   14~15: Sharp 전압(mV)   16: Sharp 거리(cm, 0=없음, 255=80 cm 넘음)   17: 상대 감지(bit0 왼 bit1 가운데 bit2 오른)
+//   8~9: 순번   10~13: millis()   14~15: Sharp 전압(mV)   16: Sharp 거리(cm, 0=없음, 255=80 cm 넘음)   17: 상대 감지(bit0 왼 bit1 가운데 bit2 오른) + 바닥 IR 흰색(bit4 왼 bit5 오른)
 void sendWebStatus() {
   static unsigned long last = 0;
   if (millis() - last < 100) return;
@@ -1436,7 +1501,7 @@ void sendWebStatus() {
   uint32_t ms = millis();
   memcpy(s + 10, &ms, 4);
   s[14] = sharpS[0].mv & 0xFF;  s[15] = sharpS[0].mv >> 8;  s[16] = sharpS[0].cm;
-  s[17] = oppMask;
+  s[17] = oppMask | (floorMask << 4);           // bit4 바닥 왼쪽 흰색, bit5 바닥 오른쪽 흰색
   rlSendStatus(s, 18);
 }
 
@@ -1465,6 +1530,8 @@ void setup() {
   loadMotorPins();
   loadSharpPin();
   setupSharp();
+  loadFloorPins();
+  setupFloor();
   loadOppPins();
   for (int i = 0; i < 3; i++) if (!oppPinOk(oppPin[i])) oppPin[i] = 255;
   setupOpp();
@@ -1544,6 +1611,7 @@ void loop() {
   checkBootButton();             // BOOT 버튼 3초 유지 → 페어링 초기화, 짧게 → 블록의 로봇 버튼
   readSharp();
   readOpp();
+  readFloor();
   readColor();
   sendWebStatus();
   sendColorStatus();             // 0xA2: 바닥 색 + 왼쪽·오른쪽 Sharp

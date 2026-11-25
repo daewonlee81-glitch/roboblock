@@ -188,7 +188,7 @@ select.warn{border-color:var(--accent)}
 .col-cell.na{opacity:.55}
 .col-sw{grid-row:span 2;width:40px;height:40px;border-radius:8px;border:1px solid var(--line)}
 .col-cell b{font-size:16px}
-.col-cell small{font-size:11.5px;font-family:var(--font-mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.col-cell small{font-size:11.5px;font-family:var(--font-mono);color:var(--muted);line-height:1.35;overflow-wrap:anywhere}
 .opp-cell.on .opp-lamp{background:currentColor}
 .mtrs{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px}
 .mtr{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
@@ -343,6 +343,19 @@ select.warn{border-color:var(--accent)}
           <div class="tbl"><table class="sns-ref"><thead><tr><th>거리</th><th>10 cm</th><th>15</th><th>20</th><th>30</th><th>40</th><th>50</th><th>60</th><th>80</th></tr></thead>
           <tbody><tr><th>전압</th><td>2.3 V</td><td>1.65</td><td>1.3</td><td>0.92</td><td>0.75</td><td>0.6</td><td>0.52</td><td>0.4</td></tr></tbody></table></div>
         </details>
+        </div>
+        <div class="sec" id="flrBox" hidden>
+          <div class="sec-head"><b>바닥 IR · HW-870 (디지털 DO)</b><span class="pill" id="flrState">화면 미리보기</span></div>
+          <div class="col-row" id="flrRow"></div>
+          <div class="meta" id="flrHint"></div>
+          <details class="sns-help">
+            <summary>HW-870 배선과 가변저항 맞추기</summary>
+            <ol>
+              <li><b>VCC → 3.3 V</b> (확장 보드 G·V·S의 V, 점퍼 3.3 그대로), <b>GND → G</b>, <b>DO → S</b>: 왼쪽 <b>GPIO 18</b>, 오른쪽 <b>GPIO 19</b>. <b>AO</b>는 비워 둡니다. VCC를 5 V로 주면 DO도 5 V가 나와 ESP32 핀에 무리가 갑니다.</li>
+              <li>센서 면을 바닥에서 <b>3~10 mm</b>에 두고, 파란 가변저항을 드라이버로 돌려 <b>흰 테두리 위에서 아래 LED(开关指示)가 켜지고, 검은 바닥에서 꺼지게</b> 맞춥니다.</li>
+              <li>LED가 켜지면 DO = LOW = 이 화면에서 "흰색"입니다. 위쪽 LED(电源指示)는 전원 표시입니다.</li>
+            </ol>
+          </details>
         </div>
         <div class="sec" id="colBox" hidden>
           <div class="sec-head"><b>바닥 색 · TCS34725 (I²C)</b><span class="pill" id="colState">화면 미리보기</span></div>
@@ -544,6 +557,7 @@ const DEVICE_TYPES = {
   buzzer:  {label:'부저', short:'부저', defaultName:'부저', roles:[['SIG','pwm']], pwmUse:1, power:'GND 공통'},
   button:  {label:'버튼', short:'버튼 · 풀업 입력', defaultName:'버튼', roles:[['SIG','in']], power:'다른 쪽은 GND'},
   irfloor: {label:'IR 반사 바닥 센서 (TCRT5000)', short:'IR 반사 · 아날로그', defaultName:'바닥 센서', roles:[['AO','adc']], power:'VCC 3.3 V', sensor:{min:0, max:100, def:50, unit:'', name:'밝기'}},
+  irdo:    {label:'IR 바닥 센서 HW-870 (TCRT5000 · 디지털 DO)', short:'IR 바닥 · 디지털 DO', defaultName:'바닥 IR', roles:[['DO','in']], power:'VCC 3.3 V (5 V면 DO도 5 V)', sensor:{min:0, max:1, def:0, unit:'', name:'흰색', bool:true}},
   sharp:   {label:'Sharp GP2Y0A21 거리', short:'Sharp 거리 · 아날로그', defaultName:'Sharp 거리', roles:[['OUT','adc']], power:'VCC 5 V', sensor:{min:10, max:80, def:80, unit:'cm', name:'거리'}},
   gp2y0d:  {label:'Sharp GP2Y0D 디지털 거리 (상대 감지)', short:'Sharp GP2Y0D · 디지털', defaultName:'상대 감지', roles:[['OUT','in']], power:'VCC 5 V · 출력 레벨 변환', sensor:{min:0, max:1, def:0, unit:'', name:'감지', bool:true}},
   hcsr04:  {label:'초음파 HC-SR04', short:'초음파 HC-SR04', defaultName:'초음파', roles:[['TRIG','out'],['ECHO','in']], power:'VCC 5 V · ECHO 분압', sensor:{min:2, max:400, def:150, unit:'cm', name:'거리'}},
@@ -557,9 +571,9 @@ const DEVICE_TYPES = {
   pcacont: {label:'360° 연속회전 서보 · PCA9685 채널', short:'360° 서보 · PCA9685', defaultName:'회전 서보', roles:[], pca:true, cont:true, power:'PCA9685 V+'},
   vacuum:  {label:'진공 압력 센서 XGZP6847 (아날로그)', short:'진공 압력 · 아날로그', defaultName:'진공 압력', roles:[['OUT','adc']], power:'VCC 5 V · 출력 분압', sensor:{min:0, max:100, def:0, unit:'kPa', name:'진공도'}}
 };
-const ADDABLE = ['drv8871','encmotor','stepper','servo','pca9685','pcaservo','pcacont','mosfet','led','buzzer','button','irfloor','sharp','gp2y0d','hcsr04','e18','tfluna','vl53l0x','tcs3472','vacuum','oled'];
+const ADDABLE = ['drv8871','encmotor','stepper','servo','pca9685','pcaservo','pcacont','mosfet','led','buzzer','button','irfloor','irdo','sharp','gp2y0d','hcsr04','e18','tfluna','vl53l0x','tcs3472','vacuum','oled'];
 const DIST_TYPES = ['tfluna','vl53l0x','sharp','hcsr04'];
-const SENSOR_TYPES = ['tfluna','vl53l0x','sharp','gp2y0d','hcsr04','irfloor','tcs3472','e18','vacuum','button'];
+const SENSOR_TYPES = ['tfluna','vl53l0x','sharp','gp2y0d','hcsr04','irfloor','irdo','tcs3472','e18','vacuum','button'];
 const SHARP_NAME = {C:'앞 거리 (Sharp)', L:'왼쪽 거리 (Sharp)', R:'오른쪽 거리 (Sharp)'}, SHARP_INFO = {C:'sharp', L:'sharpL', R:'sharpR'}, SIDE_KO = {C:'앞', L:'왼쪽', R:'오른쪽'};
 const COLORS = [['흰색',2,'#F4F4F0'],['검정',1,'#1B1B1B'],['빨강',3,'#D7373F'],['노랑',4,'#E8C21C'],['초록',5,'#2E9E5B'],['파랑',6,'#2F74D0']];
 const COLOR_KO = {0:'센서 없음', 1:'검정', 2:'흰색', 3:'빨강', 4:'노랑', 5:'초록', 6:'파랑'}, COLOR_CPP = {1:'COLOR_BLACK', 2:'COLOR_WHITE', 3:'COLOR_RED', 4:'COLOR_YELLOW', 5:'COLOR_GREEN', 6:'COLOR_BLUE'};
@@ -583,8 +597,8 @@ function defaultDevices(key){
     {id:'sharp', type:'sharp', name:SHARP_NAME.C, side:'C', pins:{OUT:36}},     // GP2Y0A21 ×3: 앞 SVP · 왼쪽 SVN · 오른쪽 34
     {id:'sharpL', type:'sharp', name:SHARP_NAME.L, side:'L', pins:{OUT:39}},
     {id:'sharpR', type:'sharp', name:SHARP_NAME.R, side:'R', pins:{OUT:34}},
-    {id:'colL', type:'tcs3472', name:'바닥 색 왼쪽', side:'L', pins:{SDA:16, SCL:17}},   // OLED와 같은 I²C
-    {id:'colR', type:'tcs3472', name:'바닥 색 오른쪽', side:'R', pins:{SDA:13, SCL:14}},  // 두 번째 I²C (주소 0x29가 같아서)
+    {id:'flL', type:'irdo', name:'바닥 IR 왼쪽', side:'L', pins:{DO:18}},     // HW-870 DO, VCC 3.3 V
+    {id:'flR', type:'irdo', name:'바닥 IR 오른쪽', side:'R', pins:{DO:19}},
     boot];
   return [...drive, {id:'oled', type:'oled', name:'OLED', pins:{SDA:16, SCL:17}}, boot];
 }
@@ -609,7 +623,7 @@ function loadDevices(){
   const saved = store.get(devKey(robotKey), null);
   devices = Array.isArray(saved) && saved.length && saved.every(d => DEVICE_TYPES[d.type]) ? saved : defaultDevices(robotKey);
 }
-function devKey(k){ return (k === 'sumo' ? 'rb.devices7.' : 'rb.devices4.') + k; }   // 스모는 Sharp 거리 3개 + 바닥 색 2개 구성으로 새로 시작
+function devKey(k){ return (k === 'sumo' ? 'rb.devices8.' : 'rb.devices4.') + k; }   // 스모는 Sharp 거리 3개 + 바닥 IR 2개 구성으로 새로 시작
 function saveDevices(){ store.set(devKey(robotKey), devices); }
 function devById(id){ return devices.find(d => d.id === id); }
 function deviceUsingPin(p){ for (const d of devices) for (const r in d.pins) if (d.pins[r] === p) return [d, r]; return null; }
@@ -959,6 +973,7 @@ function isRealSensor(d){
     return d.pins.SDA === c[k] && d.pins.SCL === c[k + 1];
   }
   if (d.type === 'gp2y0d') return oppBit(d) >= 0;
+  if (d.type === 'irdo'){ if (!link.info.flr || d.pins.DO == null) return false; return Number(link.info.flr.split(',')[d.side === 'R' ? 1 : 0]) === d.pins.DO; }
   return false;
 }
 // 로봇이 보내는 상대 감지 비트(0 왼 · 1 가운데 · 2 오른) 중 이 센서의 자리. 펌웨어 0.5+ (info opp=18,19,23)
@@ -998,6 +1013,7 @@ function sigOf(d, role){
     case 'button': { const p = (d.id === 'boot' && now < bootDownUntil) || s.pressed; return p ? {mode:'low', active:true, text:'LOW (눌림)'} : {mode:'high', text:'HIGH'}; }
     case 'e18': return s.value ? {mode:'low', active:true, text:'LOW (감지)'} : {mode:'high', text:'HIGH'};
     case 'gp2y0d': return s.value ? {mode:'high', active:true, text:'HIGH (감지)'} : {mode:'low', text:'LOW'};
+    case 'irdo': return s.value ? {mode:'low', active:true, text:'LOW (흰색)'} : {mode:'high', text:'HIGH (검정)'};
     case 'tcs3472': if (isRealSensor(d)) return {mode:'pulse', active:true, text: role === 'SDA' ? `0x29 ${COLOR_KO[colorOf(d)]}` : 'CLK 400k', speed:0.4}; return fl ? {mode:'pulse', active:true, text: role === 'SDA' ? '0x29 읽기' : 'CLK 400k', speed:0.4} : {mode:'high', text:'유휴'};
     case 'irfloor': case 'sharp': if (isRealSensor(d)) return {mode:'adc', active:true, text:`${((s.mv || 0)/1000).toFixed(2)} V`};
       return {mode:'adc', active:fl, text:`ADC ${adcOf(d)}`};
@@ -1021,6 +1037,7 @@ function cardValue(d){
     case 'buzzer': return performance.now() < s.until ? '삑' : '—';
     case 'button': return sigOf(d, 'SIG').active ? '눌림' : '—';
     case 'e18': case 'gp2y0d': return s.value ? '감지' : '—';
+    case 'irdo': return s.value ? '흰색' : '검정';
     case 'tcs3472': return `${COLOR_KO[colorOf(d)]} · ${Math.round(s.value)}`;
     case 'oled': return 'I²C ' + T.addr;
     default: if (s.far) return `>${T.sensor.max} ${T.sensor.unit}`; return `${Math.round(s.value)}${T.sensor && T.sensor.unit ? ' ' + T.sensor.unit : ''}`;
@@ -1648,7 +1665,7 @@ async function callProc(b){
   try{ await execChain(def.getInputTargetBlock('STACK')); return def.getInput('RETURN') ? await val(def, 'RETURN', 0) : 0; }
   finally{ run.frames.pop(); }
 }
-function floorDev(side){ const list = devices.filter(d => d.type === 'irfloor' || d.type === 'tcs3472'); return list.find(d => d.side === side) || list[side === 'L' ? 0 : 1] || list[0]; }
+function floorDev(side){ const list = devices.filter(d => d.type === 'irfloor' || d.type === 'irdo' || d.type === 'tcs3472'); return list.find(d => d.side === side) || list[side === 'L' ? 0 : 1] || list[0]; }
 function distDev(side){ const list = devices.filter(d => DIST_TYPES.includes(d.type)); return side ? list.find(d => (d.side || 'C') === side) : list.find(d => (d.side || 'C') === 'C') || list[0]; }
 function sharpSide(d){ return d.side || 'C'; }
 // 상대가 보이나: 디지털 센서(GP2Y0D)가 감지하거나, 그쪽 거리 센서가 70 cm 안
@@ -1675,10 +1692,10 @@ async function evalExpr(b){
     case 'math_random_int': { const lo = Math.round(await val(b, 'FROM', 1)), hi = Math.round(await val(b, 'TO', 10)); return Math.floor(Math.random()*(Math.abs(hi - lo) + 1)) + Math.min(lo, hi); }
     case 'variables_get': return getVar(varName(b));
     case 'procedures_callreturn': return await callProc(b);
-    case 'rb_floor': { const d = floorDev(b.getFieldValue('SIDE')); return d ? sensorValue(d) : 0; }
-    case 'rb_edge': { const d = floorDev(b.getFieldValue('SIDE')); return d ? sensorValue(d) > 50 : false; }
+    case 'rb_floor': { const d = floorDev(b.getFieldValue('SIDE')); return d ? (d.type === 'irdo' ? (sensorValue(d) ? 100 : 0) : sensorValue(d)) : 0; }
+    case 'rb_edge': { const d = floorDev(b.getFieldValue('SIDE')); return d ? (d.type === 'irdo' ? !!sensorValue(d) : sensorValue(d) > 50) : false; }
     case 'rb_dist': { const d = distDev(b.getFieldValue('SIDE') || 'C'); return d ? sensorValue(d) : 999; }
-    case 'rb_floor_color': { const d = floorDev(b.getFieldValue('SIDE')); if (!d) return false; sensorValue(d); return d.type === 'tcs3472' ? colorOf(d) === Number(b.getFieldValue('COLOR')) : (Number(b.getFieldValue('COLOR')) === 2 ? sensorValue(d) > 50 : Number(b.getFieldValue('COLOR')) === 1 && sensorValue(d) <= 50); }
+    case 'rb_floor_color': { const d = floorDev(b.getFieldValue('SIDE')); if (!d) return false; sensorValue(d); if (d.type === 'tcs3472') return colorOf(d) === Number(b.getFieldValue('COLOR')); const white = d.type === 'irdo' ? !!sensorValue(d) : sensorValue(d) > 50; return Number(b.getFieldValue('COLOR')) === (white ? 2 : 1); }
     case 'rb_opp': return oppSeen(b.getFieldValue('SIDE'));
     case 'rb_see': return oppSeen('ANY');
     case 'rb_ball_dir': return virt.ballDir;
@@ -1692,7 +1709,7 @@ async function evalExpr(b){
     case 'rb_enc_read': { const d = devOrMsg(b); if (!d) return 0; const s = R(d); return b.getFieldValue('WHAT') === 'RPM' ? Math.round(s.rpm) : Math.round(s.count); }
     case 'rb_dread': {
       const p = Number(b.getFieldValue('PIN')), u = deviceUsingPin(p);
-      if (u && ['button','e18','gp2y0d'].includes(u[0].type)) return sigOf(u[0], u[1]).mode === 'high';
+      if (u && ['button','e18','gp2y0d','irdo'].includes(u[0].type)) return sigOf(u[0], u[1]).mode === 'high';
       const g = pinBlockSig.get(p); return !!(g && g.mode === 'high');
     }
     case 'rb_aread': { const p = Number(b.getFieldValue('PIN')), u = deviceUsingPin(p); if (u && DEVICE_TYPES[u[0].type].sensor){ sensorValue(u[0]); return adcOf(u[0]); } return 0; }
@@ -1862,6 +1879,7 @@ function deviceSetupLines(){
       case 'buzzer': L.push(`  rb.addBuzzer(${nm}, ${p.SIG});`); break;
       case 'button': L.push(`  rb.addButton(${nm}, ${p.SIG});`); break;
       case 'irfloor': L.push(`  rb.addAnalogSensor(${nm}, ${p.AO});`); break;
+      case 'irdo': L.push(`  rb.addFloorIR(${nm}, ${p.DO}, ${d.side === 'R' ? 'RIGHT' : 'LEFT'});   // HW-870 DO, 흰색 = LOW`); break;
       case 'sharp': L.push(`  rb.addSharpIR(${nm}, ${p.OUT}, ${({C:'FRONT', L:'LEFT', R:'RIGHT'})[sharpSide(d)]});`); break;
       case 'hcsr04': L.push(`  rb.addUltrasonic(${nm}, ${p.TRIG}, ${p.ECHO});`); break;
       case 'e18': L.push(`  rb.addDigitalSensor(${nm}, ${p.OUT});`); break;
@@ -2073,13 +2091,16 @@ async function applyPinsToRobot(){
   else if (sh && sh.pins.OUT != null && link.info.sharp !== undefined) linkQueue([0x08, sh.pins.OUT]);
   const opp = OPP_SIDES.map(k => { const o = oppDevs().find(d => d.side === k); return o && o.pins.OUT != null ? o.pins.OUT : 255; });
   if (link.info.opp !== undefined) linkQueue([0x0A, ...opp, 1]);
+  const flr = ['L','R'].map(k => { const f = devices.find(d => d.type === 'irdo' && d.side === k); return f && f.pins.DO != null ? f.pins.DO : 255; });
+  if (link.info.flr !== undefined) linkQueue([0x0C, ...flr]);
   await new Promise(r => setTimeout(r, 500));
   try{
     link.info = parseInfo(new TextDecoder().decode(await link.inf.readValue()));
     const shp = devices.find(d => d.type === 'sharp');
     const ok = motorPinsMatchRobot()
             && (link.info.sharpL !== undefined ? ['sharp','sharpL','sharpR'].every((k, i) => Number(link.info[k]) === shp3[i]) : (!shp || link.info.sharp === undefined || Number(link.info.sharp) === shp.pins.OUT))
-            && (link.info.opp === undefined || link.info.opp === opp.join(','));
+            && (link.info.opp === undefined || link.info.opp === opp.join(','))
+            && (link.info.flr === undefined || link.info.flr === flr.join(','));
     msg.textContent = ok ? '로봇에 적용하고 저장했습니다. 다시 켜도 이 핀을 씁니다.' : '로봇이 이 핀을 받지 않았습니다. 입력 전용·플래시·OLED·BOOT 핀이나 겹치는 핀이 없는지 보세요.';
   }catch(e){ msg.textContent = '로봇 정보를 다시 읽지 못했습니다: ' + e.message; }
   renderMotorPanel(true);
@@ -2187,7 +2208,10 @@ function onStatus(dv){
   }
   if (dv.byteLength >= 18){   // 펌웨어 0.5+: 상대 감지 비트
     const mask = dv.getUint8(17);
-    for (const d of devices){ if (d.type !== 'gp2y0d') continue; const i = oppBit(d); if (i >= 0) R(d).value = (mask >> i) & 1; }
+    for (const d of devices){
+      if (d.type === 'gp2y0d'){ const i = oppBit(d); if (i >= 0) R(d).value = (mask >> i) & 1; }
+      else if (d.type === 'irdo' && isRealSensor(d)) R(d).value = (mask >> (d.side === 'R' ? 5 : 4)) & 1;
+    }
   }
 }
 // 0xA2 (펌웨어 0.6+): 바닥 색 2개 + 왼쪽·오른쪽 Sharp
@@ -2227,6 +2251,14 @@ function syncFromInfo(info){
       const o = oppDevs().find(d => d.side === k);
       if (!o && robotKey === 'sumo'){ devices.push({id:'opp' + k, type:'gp2y0d', name:OPP_NAME[k], side:k, pins:{OUT:pin}}); changed = true; }
       else if (o && o.pins.OUT !== pin){ o.pins.OUT = pin; changed = true; }
+    });
+  }
+  if (info.flr){   // 바닥 IR (HW-870 DO) 왼쪽·오른쪽
+    info.flr.split(',').map(Number).forEach((pin, i) => {
+      const side = i ? 'R' : 'L'; if (!(pin >= 0) || pin === 255) return;
+      const f = devices.find(d => d.type === 'irdo' && d.side === side);
+      if (!f && robotKey === 'sumo' && !devices.some(d => (d.type === 'irfloor' || d.type === 'tcs3472') && d.side === side)){ devices.push({id:'fl' + side, type:'irdo', name:'바닥 IR ' + (i ? '오른쪽' : '왼쪽'), side, pins:{DO:pin}}); changed = true; }
+      else if (f && f.pins.DO !== pin){ f.pins.DO = pin; changed = true; }
     });
   }
   if (changed){ saveDevices(); renderAll(); }
@@ -2329,7 +2361,7 @@ function applyRobot(key, fromUser){
   stopDrive();
   renderAll();
   setStatus('대기', '');
-  setMsg(key === 'sumo' ? '스모 예제: 바닥이 흰색이면 물러나고, 앞 센서가 보면 돌진, 왼쪽·오른쪽이 보면 그쪽으로 돌기. 모니터의 거리 슬라이더와 "센서 확인"의 바닥 색 칸으로 시험해 보세요.'
+  setMsg(key === 'sumo' ? '스모 예제: 바닥이 흰색이면 물러나고, 앞 센서가 보면 돌진, 왼쪽·오른쪽이 보면 그쪽으로 돌기. 모니터의 거리 슬라이더와 "센서 확인"의 바닥 IR 칸으로 시험해 보세요.'
        : key === 'middle' ? '예제: 빨간 블록 집어 오른쪽 매트에 놓기 + Xbox Y = 2층 매크로'
        : '예제: 2칸씩 네모 그리기. 실행하면 모터 드라이버 선이 바뀌는 것을 볼 수 있습니다.');
 }
@@ -2520,6 +2552,43 @@ function updateColorBox(now, list){
     const el = $('#colCalState'); if (el.textContent !== t) el.textContent = t;
   }
 }
+const flrUi = {sig:''};
+function updateFloorBox(now, list){
+  const row = $('#flrRow');
+  const sig = list.map(d => d.id + ':' + d.side + ':' + d.pins.DO).join('|');
+  if (sig !== flrUi.sig){
+    flrUi.sig = sig; row.innerHTML = '';
+    for (const d of list){
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'col-cell'; b.dataset.id = d.id;
+      b.innerHTML = `<span class="col-sw" aria-hidden="true"></span><b></b><small></small>`;
+      b.addEventListener('click', () => { const x = devById(d.id); if (x && !isRealSensor(x)) R(x).value = R(x).value ? 0 : 1; });
+      row.appendChild(b);
+    }
+  }
+  const stale = link.on && now - link.lastStatus > 1500, noFw = link.on && link.info.flr === undefined;
+  for (const b of row.children){
+    const d = devById(b.dataset.id); if (!d) continue;
+    const real = isRealSensor(d), w = !!R(d).value, side = d.side === 'R' ? '오른쪽' : '왼쪽';
+    const name = !link.on || (real && !stale) ? (w ? '흰색 (가장자리)' : '검정') : stale ? '--' : noFw ? '펌웨어 없음' : '핀 다름';
+    const sub = `${side} · GPIO ${d.pins.DO ?? '?'}${!link.on ? ' · 가상' : real ? (w ? ' · LOW' : ' · HIGH') : ''}`;
+    const bt = b.querySelector('b'); if (bt.textContent !== name) bt.textContent = name;
+    const sm = b.querySelector('small'); if (sm.textContent !== sub) sm.textContent = sub;
+    b.querySelector('.col-sw').style.background = (!link.on || (real && !stale)) ? (w ? '#F4F4F0' : '#1B1B1B') : 'transparent';
+    b.disabled = real; b.classList.toggle('na', link.on && !real);
+    b.setAttribute('aria-pressed', w ? 'true' : 'false');
+  }
+  const realAll = link.on && list.every(isRealSensor), allW = realAll && list.every(d => R(d).value);
+  if (allW){ if (!flrUi.wSince) flrUi.wSince = now; } else flrUi.wSince = 0;
+  let state, kind, hint;
+  if (!link.on){ state = '화면 미리보기'; kind = ''; hint = '칸을 누르면 가상으로 흰색·검정이 바뀝니다. 흰색이면 "가장자리인가?"가 참입니다.'; }
+  else if (noFw){ state = '펌웨어 업데이트 필요'; kind = 'err'; hint = '로봇 펌웨어가 바닥 IR을 읽지 않습니다. 최신 soccer_roboblock 펌웨어(0.7 이상)를 올려 주세요.'; }
+  else if (stale){ state = '신호 끊김'; kind = 'err'; hint = '로봇에서 1.5초 넘게 값이 오지 않습니다.'; }
+  else if (!realAll){ state = '핀이 다름'; kind = 'wait'; hint = `로봇은 GPIO ${link.info.flr.split(',').map(v => v === '255' ? '없음' : v).join(' · ')}(왼쪽·오른쪽)에서 읽습니다. 장치 핀을 맞추거나 "로봇에 핀 적용·저장"을 누르세요.`; }
+  else if (flrUi.wSince && now - flrUi.wSince > 3000){ state = '작동 중 · 둘 다 흰색'; kind = 'wait'; hint = '두 센서가 3초 넘게 흰색입니다. 정말 흰 곳이 아니라면 가변저항을 돌려 검은 바닥에서 아래 LED가 꺼지게 하세요. 센서를 들어 올리면 흰색이 되는 모듈도 있습니다.'; }
+  else { state = '작동 중'; kind = 'run'; hint = '센서를 검은 바닥과 흰 테두리 위로 옮겨 보세요. 모듈의 아래 LED와 이 칸이 함께 바뀌어야 합니다.'; }
+  const pill = $('#flrState'); if (pill.textContent !== state){ pill.textContent = state; pill.className = 'pill' + (kind ? ' ' + kind : ''); }
+  const h = $('#flrHint'); if (h.textContent !== hint) h.textContent = hint;
+}
 async function colorCalStep(step){
   if (!link.on) return;
   linkQueue([0x0B, step]);
@@ -2532,13 +2601,17 @@ function updateSensorCard(now){
   const showSharp = !!d && (robotKey === 'sumo' || sharpDevs().some(isRealSensor));
   const showOpp = opps.length > 0 && (robotKey === 'sumo' || opps.some(isRealSensor));
   const showCol = cols.length > 0 && (robotKey === 'sumo' || cols.some(isRealSensor));
-  const show = showSharp || showOpp || showCol;
+  const show = showSharp || showOpp || showCol || (robotKey === 'sumo' && devices.some(x => x.type === 'irdo')) || devices.some(x => x.type === 'irdo' && isRealSensor(x));
   if (card.hidden === show) card.hidden = !show;
   if (!show) return;
   const sb = $('#snsSharpBox'), ob = $('#oppBox');
   if (sb.hidden === showSharp) sb.hidden = !showSharp;
   if (ob.hidden === showOpp) ob.hidden = !showOpp;
   const cb = $('#colBox'); if (cb.hidden === showCol) cb.hidden = !showCol;
+  const flrs = devices.filter(x => x.type === 'irdo').sort((a, b) => (a.side === 'R') - (b.side === 'R'));
+  const showFlr = flrs.length > 0 && (robotKey === 'sumo' || flrs.some(isRealSensor));
+  const fb = $('#flrBox'); if (fb.hidden === showFlr) fb.hidden = !showFlr;
+  if (showFlr) updateFloorBox(now, flrs);
   if (showOpp) updateOppBox(now, opps);
   if (showCol) updateColorBox(now, cols);
   if (!showSharp) return;
@@ -2743,7 +2816,7 @@ setWireFit(store.get('rb.wireFit', true) !== false);
 applySplit();
 
 /* ───────────── 정보 · 개발자 · 버그 신고 ───────────── */
-const APP_VERSION = '0.17';
+const APP_VERSION = '0.18';
 const BUG_URL = 'https://github.com/daewonlee81-glitch/roboblock/issues/new';
 const diagErrors = [];
 window.addEventListener('error', e => { diagErrors.push(String(e.message || e.error || e).slice(0, 200)); if (diagErrors.length > 5) diagErrors.shift(); });
