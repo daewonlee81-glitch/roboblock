@@ -45,6 +45,22 @@
 #include "btstack.h"            // Bluepad32 안의 BTstack (로보블록 웹 연결용)
 #include "soc/soc.h"            // 브라운아웃 디텍터 비활성화용
 #include "soc/rtc_cntl_reg.h"
+#include <Wire.h>
+#define COLOR_R_SDA 13            // 오른쪽 바닥 색 센서용 두 번째 I²C (Wire1)
+#define COLOR_R_SCL 14
+
+// 바닥 색 센서 TCS34725 한 개의 상태 (아래 "바닥 색 센서" 부분에서 사용)
+struct ColorSensor {
+  TwoWire* bus;
+  bool ok;
+  uint16_t c, r, g, b;          // 원래 값
+  uint8_t bright;               // 밝기 0~100 (보정 반영)
+  uint8_t color;                // 0 없음 1 검정 2 흰색 3 빨강 4 노랑 5 초록 6 파랑
+  uint8_t r8, g8, b8;           // 화면 표시용 색 (흰색 보정 반영, 0~255)
+  uint16_t wc, wr, wg, wb;      // 흰색 보정 (0 = 안 함)
+  uint16_t kc;                  // 검정 보정
+};
+
 
 // =====================================================================
 // RoboLink — 로보블록 웹 에디터와 Web Bluetooth(BLE GATT)로 통신
@@ -158,8 +174,11 @@ volatile uint8_t rl_qHead = 0, rl_qTail = 0;
 
 uint8_t rl_statusBuf[20];
 uint8_t rl_statusLen = 0;
+uint8_t rl_extraBuf[20];                 // 두 번째 알림 (0xA2 바닥 색 센서)
+uint8_t rl_extraLen = 0;
+volatile bool rl_statusDirty = false, rl_extraDirty = false;
 
-char rl_infoStr[256];
+char rl_infoStr[400];
 uint8_t rl_advData[31];
 uint8_t rl_advLen = 0;
 uint8_t rl_scanResp[31];
@@ -233,13 +252,17 @@ void rl_onPacket(uint8_t type, uint16_t, uint8_t* packet, uint16_t) {
       break;
     case ATT_EVENT_CAN_SEND_NOW: {
       uint8_t tmp[20];
-      uint16_t n;
+      uint16_t n = 0;
+      bool more;
       portENTER_CRITICAL(&rl_mux);
-      n = rl_statusLen;
-      memcpy(tmp, rl_statusBuf, n);
+      if (rl_statusDirty) { n = rl_statusLen; memcpy(tmp, rl_statusBuf, n); rl_statusDirty = false; }
+      else if (rl_extraDirty) { n = rl_extraLen; memcpy(tmp, rl_extraBuf, n); rl_extraDirty = false; }
+      more = rl_statusDirty || rl_extraDirty;
       portEXIT_CRITICAL(&rl_mux);
-      if (rl_conHandle != HCI_CON_HANDLE_INVALID && rl_notifyOn && n) att_server_notify(rl_conHandle, STATUS_HANDLE, tmp, n);
-      rl_notifyPending = false;
+      bool ok = rl_conHandle != HCI_CON_HANDLE_INVALID && rl_notifyOn;
+      if (ok && n) att_server_notify(rl_conHandle, STATUS_HANDLE, tmp, n);
+      if (ok && more) att_server_request_can_send_now_event(rl_conHandle);   // 남은 알림을 이어서 보낸다
+      else rl_notifyPending = false;
       break;
     }
     default:
@@ -315,11 +338,31 @@ bool rlPopCommand(uint8_t* buf, uint8_t* len) {
   return ok;
 }
 
+void rlKick() {
+  if (!rl_isConnected || !rl_notifyOn || rl_notifyPending || rl_notifyQueued) return;
+  rl_notifyPending = true;
+  rl_notifyQueued = true;
+  rl_notifyReg.callback = rl_doNotify;
+  btstack_run_loop_execute_on_main_thread(&rl_notifyReg);
+}
+
+// 두 번째 알림 (상태와 같은 특성으로 보내고, 첫 바이트로 구분: 0xA2)
+void rlSendExtra(const uint8_t* data, uint8_t len) {
+  if (len > 20) len = 20;
+  portENTER_CRITICAL(&rl_mux);
+  memcpy(rl_extraBuf, data, len);
+  rl_extraLen = len;
+  rl_extraDirty = true;
+  portEXIT_CRITICAL(&rl_mux);
+  rlKick();
+}
+
 void rlSendStatus(const uint8_t* data, uint8_t len) {
   if (len > 20) len = 20;
   portENTER_CRITICAL(&rl_mux);
   memcpy(rl_statusBuf, data, len);
   rl_statusLen = len;
+  rl_statusDirty = true;
   portEXIT_CRITICAL(&rl_mux);
   if (!rl_isConnected || !rl_notifyOn || rl_notifyPending || rl_notifyQueued) return;
   rl_notifyPending = true;
@@ -463,7 +506,7 @@ uint8_t brakeMask   = 0x0F;              // 비트가 1이면 그 바퀴는 능�
 const int CH_OF[4][2] = { {0, 1}, {4, 5}, {2, 3}, {6, 7} };   // 바퀴별 (IN1 채널, IN2 채널)
 const int PIN_DEFAULT[4][2] = { {32, 33}, {27, 4}, {25, 26}, {22, 21} };
 int PIN_OF[4][2] = { {32, 33}, {27, 4}, {25, 26}, {22, 21} };   // 바퀴별 (IN1, IN2) 핀 — 웹 에디터에서 바꾸면 NVS에 저장
-char robotInfo[256] = "";
+char robotInfo[400] = "";
 bool webMode = false;                    // 블록 모드(웹 에디터 연결)인가
 unsigned long lastWebCmdMs = 0;          // 마지막 웹 명령 시각 (안전 정지용)
 const unsigned long WEB_TIMEOUT_MS = 500;
@@ -700,7 +743,8 @@ void updateTFT() {
     oled.printf("BL%+4d  BR%+4d %s", motorPct[2], motorPct[3], dtxt);
     oled.setCursor(0, 52);
     if (webTimedOut) oled.print("SIGNAL LOST - BRAKE");
-    else oled.printf("> %s", webText);
+    else oled.printf("> %.16s", webText);
+    drawColor(52);
     oled.display();
     return;
   }
@@ -720,6 +764,7 @@ void updateTFT() {
   oled.printf("PAD: %s", myCtl && myCtl->isConnected() ? "OK" : "--");
   if (hasPaired) oled.printf("  MAC %02X:%02X", pairedMAC[4], pairedMAC[5]);
   else oled.print("  MAC --");
+  drawColor(42);
 
   // 속도·방향
   oled.setCursor(0, 52);
@@ -897,9 +942,10 @@ void leaveWebMode() {
 //   0x04 글자...      : OLED 마지막 줄에 표시 (ASCII, 최대 18자)
 //   0x05 핀 값        : 디지털 출력 (모터·OLED·BOOT·플래시·입력 전용 핀은 거부)
 //   0x06 바퀴 값      : 바퀴 하나만 (0~3, int8 %)
-//   0x08 핀           : Sharp 거리 센서 핀 (32~39 ADC1, 255 = 없음) → NVS에 저장
+//   0x08 핀 [핀 핀]   : Sharp 거리 센서 핀 앞 [왼쪽 오른쪽] (32~39 ADC1, 255 = 없음) → NVS에 저장
+//   0x0B 단계         : 바닥 색 보정 (1 흰색 저장, 2 검정 저장, 0 지우기) → NVS에 저장
 //   0x0A 핀×3 극성    : 상대 감지 센서 핀 왼·가운데·오른 (255 = 안 씀), 극성(1 = 감지 때 HIGH) → NVS에 저장
-//   0x09 단계         : Sharp 보정 (0 = 지우기, 1 = 지금 값을 '빈 공간', 2 = 지금 값을 '흰 종이 20 cm') → NVS에 저장
+//   0x09 단계 [센서]  : Sharp 보정, 센서 0 앞 1 왼쪽 2 오른쪽 (0 = 지우기, 1 = 지금 값을 '빈 공간', 2 = 지금 값을 '흰 종이 20 cm') → NVS에 저장
 //   0x07 핀×8         : 바퀴 핀 설정 FL_IN1 FL_IN2 FR_IN1 FR_IN2 BL_IN1 BL_IN2 BR_IN1 BR_IN2 → 적용하고 NVS에 저장
 bool pinAllowed(int p) {
   if (p < 0 || p > 39) return false;
@@ -920,89 +966,123 @@ bool motorPinOk(int p) {
   return true;
 }
 
-// ---- Sharp GP2Y0A21 적외선 거리 센서 (아날로그, 10~80 cm) ----
-//   배선: Vcc → 5V, GND → GND, Vo → ADC1 핀(기본 GPIO36). Vcc·GND 사이에 10~100 µF 콘덴서 권장.
+// ---- Sharp GP2Y0A21 적외선 거리 센서 3개 (아날로그, 10~80 cm): 앞 · 왼쪽 · 오른쪽 ----
+//   배선: Vcc → 5V, GND → 공통 GND, Vo → ADC1 핀. 센서마다 Vcc·GND 사이에 10~100 µF 콘덴서 권장.
+//   기본 핀: 앞 GPIO36(SVP) · 왼쪽 GPIO39(SVN) · 오른쪽 GPIO34
 //   Bluepad32가 블루투스를 계속 쓰므로 ADC2 핀(0,2,4,12~15,25~27)은 못 쓴다 → 32~39 중에서.
 #define SHARP_SERIAL 1                   // 1이면 시리얼 모니터에 0.5초마다 거리 출력 (센서 확인용)
-int sharpPin = 36;                       // 255 = 센서 없음. 웹 에디터(명령 0x08)에서 바꾸면 NVS에 저장
-uint16_t sharpMv = 0;                    // 출력 전압 (mV)
-uint8_t sharpCm = 0;                     // 0 = 센서 없음, 255 = 80 cm보다 멀다, 그 밖 = cm
-uint16_t sharpBuf[5] = {0};
-uint8_t sharpIdx = 0;
-float sharpEma = 0;                      // 중앙값을 한 번 더 부드럽게 (지수 평균)
-// 보정: 실제전압 = calA × 측정전압 + calB. 센서마다 바닥 전압이 달라(배선·복제품) 두 점으로 맞춘다.
-//   빈 공간(80 cm 넘음) = 0.40 V, 흰 종이 20 cm = 1.30 V (GP2Y0A21 대표값)
-float calA = 1.0f, calB = 0.0f;
-uint16_t calFarMv = 0, cal20Mv = 0;      // 보정 때 잰 원래 전압 (0 = 아직 안 함)
+const char* SHARP_NAME[3] = {"F", "L", "R"};
+const char* SHARP_KEY[3] = {"", "1", "2"};  // NVS 키 끝 (앞 센서는 예전 키 그대로)
+struct SharpS {
+  int pin;                               // 255 = 센서 없음. 웹 에디터(명령 0x08)에서 바꾸면 NVS에 저장
+  uint16_t mv;                           // 출력 전압 (mV, 보정 전)
+  uint8_t cm;                            // 0 = 센서 없음, 255 = 80 cm보다 멀다, 그 밖 = cm
+  uint16_t buf[5];
+  uint8_t idx;
+  float ema;                             // 중앙값을 한 번 더 부드럽게 (지수 평균)
+  // 보정: 실제전압 = a × 측정전압 + b. 센서마다 바닥 전압이 달라(배선·복제품) 두 점으로 맞춘다.
+  //   빈 공간(80 cm 넘음) = 0.40 V, 흰 종이 20 cm = 1.30 V (GP2Y0A21 대표값)
+  float a, b;
+  uint16_t farMv, c20Mv;                 // 보정 때 잰 원래 전압 (0 = 아직 안 함)
+};
+SharpS sharpS[3] = {{36}, {39}, {34}};
 
-bool sharpPinOk(int p) {
+bool sharpPinOk(int p, int self) {
   if (p == 255) return true;
   if (p < 32 || p > 39 || p == 37 || p == 38) return false;   // ADC1만 (37·38은 보드에 없음)
   for (int i = 0; i < 4; i++) if (PIN_OF[i][0] == p || PIN_OF[i][1] == p) return false;
+  for (int i = 0; i < 3; i++) if (i != self && sharpS[i].pin == p) return false;
   return true;
 }
 
 void setupSharp() {
-  if (sharpPin == 255) return;
-  pinMode(sharpPin, INPUT);
-  analogSetPinAttenuation(sharpPin, ADC_11db);   // 0~3.1 V 측정
+  for (int i = 0; i < 3; i++) {
+    SharpS& sh = sharpS[i];
+    sh.ema = 0; sh.idx = 0; memset(sh.buf, 0, sizeof(sh.buf)); sh.cm = 0; sh.mv = 0;
+    if (sh.pin == 255) continue;
+    pinMode(sh.pin, INPUT);
+    analogSetPinAttenuation(sh.pin, ADC_11db);   // 0~3.1 V 측정
+  }
 }
 
 void loadSharpPin() {
+  char k[8];
   prefs.begin("x4wd", true);
-  int v = prefs.getUChar("sharp", 36);
-  calA = prefs.getFloat("sca", 1.0f);
-  calB = prefs.getFloat("scb", 0.0f);
-  calFarMv = prefs.getUShort("scf", 0);
-  cal20Mv = prefs.getUShort("sc2", 0);
+  for (int i = 0; i < 3; i++) {
+    SharpS& sh = sharpS[i];
+    snprintf(k, sizeof(k), "sharp%s", SHARP_KEY[i]); int v = prefs.getUChar(k, sh.pin);
+    snprintf(k, sizeof(k), "sca%s", SHARP_KEY[i]); sh.a = prefs.getFloat(k, 1.0f);
+    snprintf(k, sizeof(k), "scb%s", SHARP_KEY[i]); sh.b = prefs.getFloat(k, 0.0f);
+    snprintf(k, sizeof(k), "scf%s", SHARP_KEY[i]); sh.farMv = prefs.getUShort(k, 0);
+    snprintf(k, sizeof(k), "sc2%s", SHARP_KEY[i]); sh.c20Mv = prefs.getUShort(k, 0);
+    if (sharpPinOk(v, i)) sh.pin = v;
+    if (!(sh.a > 0.3f && sh.a < 3.0f) || !(sh.b > -2.0f && sh.b < 1.0f)) { sh.a = 1.0f; sh.b = 0.0f; }
+  }
   prefs.end();
-  if (sharpPinOk(v)) sharpPin = v;
-  if (!(calA > 0.3f && calA < 3.0f) || !(calB > -2.0f && calB < 1.0f)) { calA = 1.0f; calB = 0.0f; }
+}
+
+void saveSharpPins() {
+  char k[8];
+  prefs.begin("x4wd", false);
+  for (int i = 0; i < 3; i++) { snprintf(k, sizeof(k), "sharp%s", SHARP_KEY[i]); prefs.putUChar(k, sharpS[i].pin); }
+  prefs.end();
 }
 
 // 보정 계산: 두 점이 있으면 기울기·절편, 빈 공간만 있으면 바닥 전압만 0.40 V로 내림
-void computeSharpCal() {
-  calA = 1.0f; calB = 0.0f;
-  float vf = calFarMv / 1000.0f, v20 = cal20Mv / 1000.0f;
-  if (calFarMv && cal20Mv && v20 > vf + 0.2f) {
-    calA = (1.30f - 0.40f) / (v20 - vf);
-    calB = 0.40f - calA * vf;
-    if (!(calA > 0.3f && calA < 3.0f)) { calA = 1.0f; calB = 0.40f - vf; }
-  } else if (calFarMv && vf > 0.40f) {
-    calB = 0.40f - vf;
+void computeSharpCal(int i) {
+  SharpS& sh = sharpS[i];
+  char k[8];
+  sh.a = 1.0f; sh.b = 0.0f;
+  float vf = sh.farMv / 1000.0f, v20 = sh.c20Mv / 1000.0f;
+  if (sh.farMv && sh.c20Mv && v20 > vf + 0.2f) {
+    sh.a = (1.30f - 0.40f) / (v20 - vf);
+    sh.b = 0.40f - sh.a * vf;
+    if (!(sh.a > 0.3f && sh.a < 3.0f)) { sh.a = 1.0f; sh.b = 0.40f - vf; }
+  } else if (sh.farMv && vf > 0.40f) {
+    sh.b = 0.40f - vf;
   }
   prefs.begin("x4wd", false);
-  prefs.putFloat("sca", calA); prefs.putFloat("scb", calB);
-  prefs.putUShort("scf", calFarMv); prefs.putUShort("sc2", cal20Mv);
+  snprintf(k, sizeof(k), "sca%s", SHARP_KEY[i]); prefs.putFloat(k, sh.a);
+  snprintf(k, sizeof(k), "scb%s", SHARP_KEY[i]); prefs.putFloat(k, sh.b);
+  snprintf(k, sizeof(k), "scf%s", SHARP_KEY[i]); prefs.putUShort(k, sh.farMv);
+  snprintf(k, sizeof(k), "sc2%s", SHARP_KEY[i]); prefs.putUShort(k, sh.c20Mv);
   prefs.end();
-  Serial.printf("Sharp 보정: 빈 공간 %u mV, 20 cm %u mV → 실제 = %.3f × 측정 %+.3f V\n", calFarMv, cal20Mv, calA, calB);
+  Serial.printf("Sharp %s 보정: 빈 공간 %u mV, 20 cm %u mV → 실제 = %.3f × 측정 %+.3f V\n", SHARP_NAME[i], sh.farMv, sh.c20Mv, sh.a, sh.b);
 }
 
-// 8 ms마다 한 번 읽고, 최근 5개의 중앙값으로 튀는 값을 거른다
+// 8 ms마다 세 센서를 한 번씩 읽고, 센서마다 최근 5개의 중앙값으로 튀는 값을 거른다
 void readSharp() {
   static unsigned long last = 0, lastPrint = 0;
-  if (sharpPin == 255) { sharpCm = 0; sharpMv = 0; return; }
   if (millis() - last < 8) return;
   last = millis();
-  sharpBuf[sharpIdx] = analogReadMilliVolts(sharpPin);
-  sharpIdx = (sharpIdx + 1) % 5;
-  uint16_t t[5];
-  memcpy(t, sharpBuf, sizeof(t));
-  for (int i = 1; i < 5; i++) for (int j = i; j > 0 && t[j - 1] > t[j]; j--) { uint16_t x = t[j]; t[j] = t[j - 1]; t[j - 1] = x; }
-  sharpEma = sharpEma <= 0 ? t[2] : sharpEma + 0.35f * (t[2] - sharpEma);
-  sharpMv = (uint16_t)(sharpEma + 0.5f);                 // 측정 전압 (보정 전)
-  float raw = sharpMv / 1000.0f;
-  float v = calA * raw + calB;                           // 보정한 전압
-  if (v < 0.42f) sharpCm = 255;                        // 80 cm보다 멀거나 앞에 아무것도 없음
-  else {
-    float cm = 29.988f * powf(v, -1.173f);             // GP2Y0A21YK0F 근사식
-    sharpCm = (uint8_t)constrain((int)(cm + 0.5f), 10, 80);   // 10 cm 안쪽은 값이 다시 작아지므로 10으로 고정
+  for (int i = 0; i < 3; i++) {
+    SharpS& sh = sharpS[i];
+    if (sh.pin == 255) { sh.cm = 0; sh.mv = 0; continue; }
+    sh.buf[sh.idx] = analogReadMilliVolts(sh.pin);
+    sh.idx = (sh.idx + 1) % 5;
+    uint16_t t[5];
+    memcpy(t, sh.buf, sizeof(t));
+    for (int x = 1; x < 5; x++) for (int j = x; j > 0 && t[j - 1] > t[j]; j--) { uint16_t y = t[j]; t[j] = t[j - 1]; t[j - 1] = y; }
+    sh.ema = sh.ema <= 0 ? t[2] : sh.ema + 0.35f * (t[2] - sh.ema);
+    sh.mv = (uint16_t)(sh.ema + 0.5f);
+    float v = sh.a * (sh.mv / 1000.0f) + sh.b;            // 보정한 전압
+    if (v < 0.42f) sh.cm = 255;                          // 80 cm보다 멀거나 앞에 아무것도 없음
+    else {
+      float cm = 29.988f * powf(v, -1.173f);             // GP2Y0A21YK0F 근사식
+      sh.cm = (uint8_t)constrain((int)(cm + 0.5f), 10, 80);   // 10 cm 안쪽은 값이 다시 작아지므로 10으로 고정
+    }
   }
 #if SHARP_SERIAL
   if (millis() - lastPrint >= 500) {
     lastPrint = millis();
-    if (sharpCm == 255) Serial.printf("Sharp GPIO%d: 측정 %.2f V (보정 %.2f V) → 80 cm 넘음\n", sharpPin, raw, v);
-    else Serial.printf("Sharp GPIO%d: 측정 %.2f V (보정 %.2f V) → %d cm\n", sharpPin, raw, v, sharpCm);
+    Serial.print("Sharp");
+    for (int i = 0; i < 3; i++) {
+      SharpS& sh = sharpS[i];
+      if (sh.pin == 255) { Serial.printf("  %s: 없음", SHARP_NAME[i]); continue; }
+      if (sh.cm == 255) Serial.printf("  %s(GPIO%d) %.2fV >80cm", SHARP_NAME[i], sh.pin, sh.mv / 1000.0f);
+      else Serial.printf("  %s(GPIO%d) %.2fV %dcm", SHARP_NAME[i], sh.pin, sh.mv / 1000.0f, sh.cm);
+    }
+    Serial.println();
   }
 #endif
 }
@@ -1012,7 +1092,7 @@ void readSharp() {
 //   출력 HIGH가 5 V 가까이라 ESP32에 바로 꽂지 말고 레벨 변환기(BSS138 모듈) 등을 거친다.
 //   GP2Y0D8xx 계열(5~15 cm)처럼 감지 때 LOW인 센서는 oppActiveHigh = 0.
 const char* OPP_NAME[3] = {"L", "C", "R"};
-int oppPin[3] = {18, 19, 23};            // 255 = 안 씀. 웹 에디터(명령 0x0A)에서 바꾸면 NVS에 저장
+int oppPin[3] = {255, 255, 255};         // 255 = 안 씀 (기본: 안 씀, 18·19·23 권장). 웹 에디터(명령 0x0A)에서 바꾸면 NVS에 저장
 bool oppActiveHigh = true;
 uint8_t oppMask = 0;                     // bit0 왼쪽, bit1 가운데, bit2 오른쪽 (감지 = 1)
 uint8_t oppPrev = 0;
@@ -1020,7 +1100,7 @@ uint8_t oppPrev = 0;
 bool oppPinOk(int p) {
   if (p == 255) return true;
   if (p < 0 || p > 39 || (p >= 6 && p <= 11) || p == 37 || p == 38) return false;
-  if (p == 0 || p == 1 || p == 3 || p == OLED_SDA || p == OLED_SCL || p == sharpPin) return false;
+  if (p == 0 || p == 1 || p == 3 || p == OLED_SDA || p == OLED_SCL || p == sharpS[0].pin || p == sharpS[1].pin || p == sharpS[2].pin || p == COLOR_R_SDA || p == COLOR_R_SCL) return false;
   for (int i = 0; i < 4; i++) if (PIN_OF[i][0] == p || PIN_OF[i][1] == p) return false;
   return true;
 }
@@ -1061,8 +1141,136 @@ void readOpp() {
   }
 }
 
+// ---- 바닥 색 센서: TCS34725 2개 (왼쪽 = OLED와 같은 I²C 16·17, 오른쪽 = 두 번째 I²C 13·14) ----
+//   TCS34725 주소는 0x29 하나로 고정이라 한 I²C 선에 2개를 달 수 없다 → 선을 둘로 나눈다.
+//   VIN → 3V3(또는 5V, 모듈에 레귤레이터가 있으면), GND → GND, LED 핀은 비워 두면 흰 LED가 켜진다.
+//   센서 아래 면과 바닥 사이 3~10 mm.
+#define TCS_ADDR    0x29
+const char* COLOR_NAME[7] = {"-", "K", "W", "R", "Y", "G", "B"};   // 없음·검정·흰색·빨강·노랑·초록·파랑
+ColorSensor colorS[2] = {{&Wire, false}, {&Wire1, false}};
+uint8_t colorPrev[2] = {255, 255};
+
+bool tcsWrite(TwoWire* w, uint8_t reg, uint8_t v) {
+  w->beginTransmission(TCS_ADDR); w->write(0x80 | reg); w->write(v);
+  return w->endTransmission() == 0;
+}
+bool tcsInit(ColorSensor& cs) {
+  cs.bus->beginTransmission(TCS_ADDR); cs.bus->write(0x80 | 0x12);
+  if (cs.bus->endTransmission() != 0) return false;
+  if (cs.bus->requestFrom((uint8_t)TCS_ADDR, (uint8_t)1) != 1) return false;
+  uint8_t id = cs.bus->read();
+  if (id != 0x44 && id != 0x4D && id != 0x10) return false;      // TCS34725 / 34727 / 3472x
+  tcsWrite(cs.bus, 0x01, 0xF6);                                   // 적분 24 ms (최대 10240)
+  tcsWrite(cs.bus, 0x0F, 0x01);                                   // 이득 4배
+  tcsWrite(cs.bus, 0x00, 0x01); delay(3);                         // 전원
+  tcsWrite(cs.bus, 0x00, 0x03);                                   // 전원 + 측정
+  return true;
+}
+void loadColorCal() {
+  uint16_t v[10];
+  prefs.begin("x4wd", true);
+  bool ok = prefs.getBytesLength("colcal") == sizeof(v) && prefs.getBytes("colcal", v, sizeof(v)) == sizeof(v);
+  prefs.end();
+  if (!ok) return;
+  for (int i = 0; i < 2; i++) { ColorSensor& cs = colorS[i]; cs.wc = v[i*5]; cs.wr = v[i*5+1]; cs.wg = v[i*5+2]; cs.wb = v[i*5+3]; cs.kc = v[i*5+4]; }
+}
+void saveColorCal() {
+  uint16_t v[10];
+  for (int i = 0; i < 2; i++) { ColorSensor& cs = colorS[i]; v[i*5] = cs.wc; v[i*5+1] = cs.wr; v[i*5+2] = cs.wg; v[i*5+3] = cs.wb; v[i*5+4] = cs.kc; }
+  prefs.begin("x4wd", false); prefs.putBytes("colcal", v, sizeof(v)); prefs.end();
+}
+void setupColor() {
+  Wire1.begin(COLOR_R_SDA, COLOR_R_SCL, 400000);
+  Wire1.setTimeOut(10);          // 센서가 없을 때 오래 기다리지 않게
+  loadColorCal();
+  for (int i = 0; i < 2; i++) {
+    colorS[i].ok = tcsInit(colorS[i]);
+    Serial.printf("바닥 색 센서 %s: %s\n", i ? "오른쪽(13·14)" : "왼쪽(16·17)", colorS[i].ok ? "찾음" : "없음");
+  }
+}
+// 원래 값 → 밝기·색 이름
+void classifyColor(ColorSensor& cs) {
+  float white = cs.wc ? cs.wc : 6000.0f, black = cs.kc ? cs.kc : 150.0f;
+  if (white < black + 50) white = black + 50;
+  float br = (cs.c - black) / (white - black) * 100.0f;
+  cs.bright = br < 0 ? 0 : br > 100 ? 100 : (uint8_t)br;
+  // 흰색 보정으로 센서마다 다른 빨강·초록·파랑 감도를 맞춘다
+  float r = cs.r / (cs.wr ? cs.wr / 1000.0f : 1.0f), g = cs.g / (cs.wg ? cs.wg / 1000.0f : 1.0f), b = cs.b / (cs.wb ? cs.wb / 1000.0f : 1.0f);
+  float mx = max(r, max(g, b)), mn = min(r, min(g, b));
+  if (mx < 1) { cs.r8 = cs.g8 = cs.b8 = 0; cs.color = 1; return; }
+  cs.r8 = r / mx * 255; cs.g8 = g / mx * 255; cs.b8 = b / mx * 255;
+  float sat = (mx - mn) / mx;
+  if (sat < 0.25f || cs.bright < 12) { cs.color = cs.bright < 35 ? 1 : 2; return; }      // 무채색: 검정 / 흰색
+  float h;                                                                              // 색상각 0~360
+  if (mx == r) h = 60 * fmodf((g - b) / (mx - mn), 6);
+  else if (mx == g) h = 60 * ((b - r) / (mx - mn) + 2);
+  else h = 60 * ((r - g) / (mx - mn) + 4);
+  if (h < 0) h += 360;
+  cs.color = (h < 25 || h >= 320) ? 3 : h < 75 ? 4 : h < 165 ? 5 : h < 260 ? 6 : 3;
+}
+void readColor() {
+  static unsigned long last = 0, retry = 0;
+  if (millis() - last < 25) return;                // 적분 24 ms마다 새 값
+  last = millis();
+  bool anyMissing = false;
+  for (int i = 0; i < 2; i++) {
+    ColorSensor& cs = colorS[i];
+    if (!cs.ok) { anyMissing = true; continue; }
+    cs.bus->beginTransmission(TCS_ADDR); cs.bus->write(0xA0 | 0x14);   // 자동 증가, CDATAL부터 8바이트
+    if (cs.bus->endTransmission() != 0 || cs.bus->requestFrom((uint8_t)TCS_ADDR, (uint8_t)8) != 8) { cs.ok = false; cs.color = 0; continue; }
+    uint8_t d[8]; for (int k = 0; k < 8; k++) d[k] = cs.bus->read();
+    cs.c = d[0] | d[1] << 8; cs.r = d[2] | d[3] << 8; cs.g = d[4] | d[5] << 8; cs.b = d[6] | d[7] << 8;
+    classifyColor(cs);
+#if SHARP_SERIAL
+    if (cs.color != colorPrev[i]) Serial.printf("바닥 %s: %s 밝기 %u%% (C%u R%u G%u B%u)\n", i ? "오른쪽" : "왼쪽", COLOR_NAME[cs.color], cs.bright, cs.c, cs.r, cs.g, cs.b);
+#endif
+    colorPrev[i] = cs.color;
+  }
+  // 뽑혀 있던 센서를 나중에 꽂아도 3초마다 다시 찾는다
+  if (anyMissing && millis() - retry > 3000) {
+    retry = millis();
+    for (int i = 0; i < 2; i++) if (!colorS[i].ok) colorS[i].ok = tcsInit(colorS[i]);
+  }
+}
+// 보정: 1 = 흰색 위에서 저장, 2 = 검정 위에서 저장, 0 = 지우기
+void colorCalStep(uint8_t step) {
+  for (int i = 0; i < 2; i++) {
+    ColorSensor& cs = colorS[i];
+    if (step == 0) { cs.wc = cs.wr = cs.wg = cs.wb = cs.kc = 0; continue; }
+    if (!cs.ok) continue;
+    if (step == 1) { cs.wc = cs.c; cs.wr = cs.r; cs.wg = cs.g; cs.wb = cs.b; }
+    if (step == 2) cs.kc = cs.c;
+  }
+  saveColorCal();
+  Serial.printf("바닥 색 보정 %s\n", step == 0 ? "지움" : step == 1 ? "흰색 저장" : "검정 저장");
+}
+void sendColorStatus() {
+  static unsigned long last = 0;
+  if (millis() - last < 100) return;
+  last = millis();
+  // 0: 0xA2   1: 있음(bit0 왼 bit1 오른)   2~7: 왼쪽 밝기 색 R G B 보정됨(bit0 흰 bit1 검)   8~13: 오른쪽 같은 순서
+  //   14~16: 왼쪽 Sharp 전압(mV 2) 거리(cm)   17~19: 오른쪽 Sharp 같은 순서
+  uint8_t s[20] = {0xA2, (uint8_t)((colorS[0].ok ? 1 : 0) | (colorS[1].ok ? 2 : 0))};
+  for (int i = 0; i < 2; i++) {
+    ColorSensor& cs = colorS[i]; uint8_t* o = s + 2 + i * 6;
+    o[0] = cs.bright; o[1] = cs.ok ? cs.color : 0; o[2] = cs.r8; o[3] = cs.g8; o[4] = cs.b8;
+    o[5] = (cs.wc ? 1 : 0) | (cs.kc ? 2 : 0);
+  }
+  for (int i = 1; i < 3; i++) { uint8_t* o = s + 14 + (i - 1) * 3; o[0] = sharpS[i].mv & 0xFF; o[1] = sharpS[i].mv >> 8; o[2] = sharpS[i].cm; }
+  rlSendExtra(s, 20);
+}
+
+// OLED: 바닥 색 두 글자 (K 검정 W 흰색 R 빨강 Y 노랑 G 초록 B 파랑, - 센서 없음)
+void drawColor(int y) {
+  if (!colorS[0].ok && !colorS[1].ok) return;
+  oled.setCursor(116, y);
+  oled.print(COLOR_NAME[colorS[0].ok ? colorS[0].color : 0]);
+  oled.print(COLOR_NAME[colorS[1].ok ? colorS[1].color : 0]);
+}
+
 // OLED: 상대 감지 3칸 (왼·가운데·오른, 감지되면 채움)
 void drawOpp(int y) {
+  if (oppPin[0] == 255 && oppPin[1] == 255 && oppPin[2] == 255) return;   // 상대 감지 센서를 안 쓰면 그리지 않는다
   for (int i = 0; i < 3; i++) {
     int x = 106 + i * 8;
     if (oppPin[i] == 255) { oled.drawLine(x, y + 3, x + 5, y + 3, SSD1306_WHITE); continue; }
@@ -1071,18 +1279,22 @@ void drawOpp(int y) {
   }
 }
 
-void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자
-  if (sharpPin == 255) snprintf(out, n, "--");
-  else if (sharpCm == 255) snprintf(out, n, ">80");
-  else snprintf(out, n, "%dcm", sharpCm);
+void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자 (앞 센서)
+  const int i = 0;
+  if (sharpS[i].pin == 255) snprintf(out, n, "--");
+  else if (sharpS[i].cm == 255) snprintf(out, n, ">80");
+  else snprintf(out, n, "%dcm", sharpS[i].cm);
 }
 
 void buildInfo() {
   snprintf(robotInfo, sizeof(robotInfo),
-           "robot=soccer;fw=roboblock-soccer-0.5;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;opp=%d,%d,%d;opph=%d",
+           "robot=soccer;fw=roboblock-soccer-0.6;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d",
            robotName, PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
-           PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL, sharpPin,
-           calA, calB, calFarMv, cal20Mv, oppPin[0], oppPin[1], oppPin[2], oppActiveHigh ? 1 : 0);
+           PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL,
+           sharpS[0].pin, sharpS[0].a, sharpS[0].b, sharpS[0].farMv, sharpS[0].c20Mv,
+           sharpS[1].pin, sharpS[1].a, sharpS[1].b, sharpS[1].farMv, sharpS[1].c20Mv,
+           sharpS[2].pin, sharpS[2].a, sharpS[2].b, sharpS[2].farMv, sharpS[2].c20Mv, oppPin[0], oppPin[1], oppPin[2], oppActiveHigh ? 1 : 0,
+           OLED_SDA, OLED_SCL, COLOR_R_SDA, COLOR_R_SCL, colorS[0].ok ? 1 : 0, colorS[1].ok ? 1 : 0);
 }
 
 void loadMotorPins() {
@@ -1149,6 +1361,9 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
     case 0x05:
       if (n >= 3 && pinAllowed(d[1])) { pinMode(d[1], OUTPUT); digitalWrite(d[1], d[2] ? HIGH : LOW); }
       break;
+    case 0x0B:
+      if (n >= 2) { colorCalStep(d[1]); buildInfo(); rlSetInfo(robotInfo); }
+      break;
     case 0x0A:
       if (n >= 5 && oppPinOk(d[1]) && oppPinOk(d[2]) && oppPinOk(d[3])) {
         for (int i = 0; i < 3; i++) oppPin[i] = d[1 + i];
@@ -1162,20 +1377,27 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
       break;
     case 0x09:
       if (n >= 2) {
-        if (d[1] == 0) { calFarMv = 0; cal20Mv = 0; }
-        else if (d[1] == 1) calFarMv = sharpMv;
-        else if (d[1] == 2) cal20Mv = sharpMv;
-        computeSharpCal();
+        int i = n >= 3 && d[2] < 3 ? d[2] : 0;          // 센서 (0 앞, 1 왼쪽, 2 오른쪽)
+        SharpS& sh = sharpS[i];
+        if (d[1] == 0) { sh.farMv = 0; sh.c20Mv = 0; }
+        else if (d[1] == 1) sh.farMv = sh.mv;
+        else if (d[1] == 2) sh.c20Mv = sh.mv;
+        computeSharpCal(i);
         buildInfo(); rlSetInfo(robotInfo);
       }
       break;
     case 0x08:
-      if (n >= 2 && sharpPinOk(d[1])) {
-        sharpPin = d[1];
-        prefs.begin("x4wd", false); prefs.putUChar("sharp", sharpPin); prefs.end();
+      if (n >= 2) {
+        int cnt = n >= 4 ? 3 : 1, old[3];
+        for (int i = 0; i < 3; i++) { old[i] = sharpS[i].pin; if (i < cnt) sharpS[i].pin = 255; }
+        bool ok = true;
+        for (int i = 0; i < cnt; i++) { if (sharpPinOk(d[1 + i], i)) sharpS[i].pin = d[1 + i]; else ok = false; }
+        if (!ok) for (int i = 0; i < 3; i++) sharpS[i].pin = old[i];   // 하나라도 안 되면 그대로
+        saveSharpPins();
         setupSharp();
+        for (int i = 0; i < 3; i++) if (!oppPinOk(oppPin[i])) { oppPin[i] = 255; setupOpp(); }
         buildInfo(); rlSetInfo(robotInfo);
-        Serial.printf("Sharp 센서 핀: %d\n", sharpPin);
+        Serial.printf("Sharp 센서 핀: 앞 %d  왼쪽 %d  오른쪽 %d\n", sharpS[0].pin, sharpS[1].pin, sharpS[2].pin);
       }
       break;
     case 0x07:
@@ -1213,7 +1435,7 @@ void sendWebStatus() {
   s[8] = statusSeq & 0xFF;  s[9] = statusSeq >> 8;  statusSeq++;
   uint32_t ms = millis();
   memcpy(s + 10, &ms, 4);
-  s[14] = sharpMv & 0xFF;  s[15] = sharpMv >> 8;  s[16] = sharpCm;
+  s[14] = sharpS[0].mv & 0xFF;  s[15] = sharpS[0].mv >> 8;  s[16] = sharpS[0].cm;
   s[17] = oppMask;
   rlSendStatus(s, 18);
 }
@@ -1289,6 +1511,7 @@ void setup() {
 #if USE_TFT
   setupTFT();
 #endif
+  setupColor();                  // 바닥 색 센서 (OLED I²C를 쓰므로 OLED 다음에)
 
   Serial.println("Ready. Xbox 컨트롤러를 페어링 모드로 두세요.");
 }
@@ -1321,7 +1544,9 @@ void loop() {
   checkBootButton();             // BOOT 버튼 3초 유지 → 페어링 초기화, 짧게 → 블록의 로봇 버튼
   readSharp();
   readOpp();
+  readColor();
   sendWebStatus();
+  sendColorStatus();             // 0xA2: 바닥 색 + 왼쪽·오른쪽 Sharp
 
 #if USE_TFT
   updateTFT();
