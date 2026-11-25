@@ -56,7 +56,7 @@ ESP32 로봇을 블록으로 코딩하는 교육용 웹 에디터입니다. 블�
 | Sharp GP2Y0A21 앞 | Vo | **SVP** (GPIO 36) |
 | Sharp GP2Y0A21 왼쪽 | Vo | **SVN** (GPIO 39) |
 | Sharp GP2Y0A21 오른쪽 | Vo | **GPIO 34** |
-| Sharp 3개 공통 | Vcc / GND | **5V** / **공통 GND**, 센서마다 Vcc·GND 사이 10~100 µF |
+| Sharp 3개 공통 | Vcc / GND | **5V** / **공통 GND**, 센서마다 Vcc·GND 사이 10~100 µF. 확장 보드 G·V·S 핀의 V는 점퍼 전압(3.3 V일 수 있음)이라 Vcc는 보드의 5V 핀에 따로 |
 | TCS34725 바닥 왼쪽 | SDA / SCL | **16 / 17** (OLED와 같은 I²C) |
 | TCS34725 바닥 오른쪽 | SDA / SCL | **13 / 14** (두 번째 I²C) |
 | TCS34725 2개 공통 | VIN / GND | **3V3** / **GND** (LED 핀은 비워 두면 켜짐) |
