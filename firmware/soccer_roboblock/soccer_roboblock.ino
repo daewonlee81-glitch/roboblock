@@ -159,7 +159,7 @@ volatile uint8_t rl_qHead = 0, rl_qTail = 0;
 uint8_t rl_statusBuf[20];
 uint8_t rl_statusLen = 0;
 
-char rl_infoStr[200];
+char rl_infoStr[256];
 uint8_t rl_advData[31];
 uint8_t rl_advLen = 0;
 uint8_t rl_scanResp[31];
@@ -463,7 +463,7 @@ uint8_t brakeMask   = 0x0F;              // 비트가 1이면 그 바퀴는 능�
 const int CH_OF[4][2] = { {0, 1}, {4, 5}, {2, 3}, {6, 7} };   // 바퀴별 (IN1 채널, IN2 채널)
 const int PIN_DEFAULT[4][2] = { {32, 33}, {27, 4}, {25, 26}, {22, 21} };
 int PIN_OF[4][2] = { {32, 33}, {27, 4}, {25, 26}, {22, 21} };   // 바퀴별 (IN1, IN2) 핀 — 웹 에디터에서 바꾸면 NVS에 저장
-char robotInfo[200] = "";
+char robotInfo[256] = "";
 bool webMode = false;                    // 블록 모드(웹 에디터 연결)인가
 unsigned long lastWebCmdMs = 0;          // 마지막 웹 명령 시각 (안전 정지용)
 const unsigned long WEB_TIMEOUT_MS = 500;
@@ -694,6 +694,7 @@ void updateTFT() {
     oled.printf("PC:OK  %s", robotName);
     oled.setCursor(0, 32);
     oled.printf("FL%+4d  FR%+4d", motorPct[0], motorPct[1]);
+    drawOpp(32);
     oled.setCursor(0, 42);
     char dtxt[8]; sharpText(dtxt, sizeof(dtxt));
     oled.printf("BL%+4d  BR%+4d %s", motorPct[2], motorPct[3], dtxt);
@@ -707,6 +708,7 @@ void updateTFT() {
   // PC(웹 에디터) 연결 상태 — 기다리는 중이면 점이 깜빡인다
   oled.setCursor(0, 22);
   oled.print("PC : waiting");
+  drawOpp(22);
   if ((millis() / 500) % 2) oled.print("...");
 
   // 웹 블루투스 이름 (에디터 목록에서 이 이름을 고른다)
@@ -896,6 +898,7 @@ void leaveWebMode() {
 //   0x05 핀 값        : 디지털 출력 (모터·OLED·BOOT·플래시·입력 전용 핀은 거부)
 //   0x06 바퀴 값      : 바퀴 하나만 (0~3, int8 %)
 //   0x08 핀           : Sharp 거리 센서 핀 (32~39 ADC1, 255 = 없음) → NVS에 저장
+//   0x0A 핀×3 극성    : 상대 감지 센서 핀 왼·가운데·오른 (255 = 안 씀), 극성(1 = 감지 때 HIGH) → NVS에 저장
 //   0x09 단계         : Sharp 보정 (0 = 지우기, 1 = 지금 값을 '빈 공간', 2 = 지금 값을 '흰 종이 20 cm') → NVS에 저장
 //   0x07 핀×8         : 바퀴 핀 설정 FL_IN1 FL_IN2 FR_IN1 FR_IN2 BL_IN1 BL_IN2 BR_IN1 BR_IN2 → 적용하고 NVS에 저장
 bool pinAllowed(int p) {
@@ -1004,6 +1007,70 @@ void readSharp() {
 #endif
 }
 
+// ---- 상대 감지 센서: Sharp GP2Y0D 디지털 거리 센서 3개 (앞 왼쪽·가운데·오른쪽) ----
+//   GP2Y0D02YK0F(80 cm): 물체가 정해진 거리 안에 있으면 출력 HIGH. 전원 4.5~5.5 V.
+//   출력 HIGH가 5 V 가까이라 ESP32에 바로 꽂지 말고 레벨 변환기(BSS138 모듈) 등을 거친다.
+//   GP2Y0D8xx 계열(5~15 cm)처럼 감지 때 LOW인 센서는 oppActiveHigh = 0.
+const char* OPP_NAME[3] = {"L", "C", "R"};
+int oppPin[3] = {18, 19, 23};            // 255 = 안 씀. 웹 에디터(명령 0x0A)에서 바꾸면 NVS에 저장
+bool oppActiveHigh = true;
+uint8_t oppMask = 0;                     // bit0 왼쪽, bit1 가운데, bit2 오른쪽 (감지 = 1)
+uint8_t oppPrev = 0;
+
+bool oppPinOk(int p) {
+  if (p == 255) return true;
+  if (p < 0 || p > 39 || (p >= 6 && p <= 11) || p == 37 || p == 38) return false;
+  if (p == 0 || p == 1 || p == 3 || p == OLED_SDA || p == OLED_SCL || p == sharpPin) return false;
+  for (int i = 0; i < 4; i++) if (PIN_OF[i][0] == p || PIN_OF[i][1] == p) return false;
+  return true;
+}
+
+void setupOpp() {
+  for (int i = 0; i < 3; i++) if (oppPin[i] != 255) pinMode(oppPin[i], INPUT);   // 레벨 변환기·분압 저항이 레벨을 잡아 준다
+}
+
+void loadOppPins() {
+  uint8_t b[3];
+  prefs.begin("x4wd", true);
+  bool ok = prefs.getBytesLength("opp") == 3 && prefs.getBytes("opp", b, 3) == 3;
+  oppActiveHigh = prefs.getUChar("opph", 1) != 0;
+  prefs.end();
+  if (!ok) return;
+  for (int i = 0; i < 3; i++) if (!oppPinOk(b[i])) return;
+  for (int i = 0; i < 3; i++) oppPin[i] = b[i];
+}
+
+// 매 loop마다 읽고, 두 번 연속 같은 값일 때만 바꾼다 (튀는 값 거르기)
+void readOpp() {
+  static unsigned long last = 0;
+  if (millis() - last < 5) return;
+  last = millis();
+  uint8_t now = 0;
+  for (int i = 0; i < 3; i++) {
+    if (oppPin[i] == 255) continue;
+    bool hi = digitalRead(oppPin[i]) == HIGH;
+    if (hi == oppActiveHigh) now |= (1 << i);
+  }
+  uint8_t stable = (now & oppPrev) | (oppMask & (now | oppPrev));   // 두 번 연속 같으면 반영
+  oppPrev = now;
+  if (stable != oppMask) {
+    oppMask = stable;
+#if SHARP_SERIAL
+    Serial.printf("상대 감지: 왼쪽 %s  가운데 %s  오른쪽 %s\n", oppMask & 1 ? "O" : "-", oppMask & 2 ? "O" : "-", oppMask & 4 ? "O" : "-");
+#endif
+  }
+}
+
+// OLED: 상대 감지 3칸 (왼·가운데·오른, 감지되면 채움)
+void drawOpp(int y) {
+  for (int i = 0; i < 3; i++) {
+    int x = 106 + i * 8;
+    if (oppPin[i] == 255) { oled.drawLine(x, y + 3, x + 5, y + 3, SSD1306_WHITE); continue; }
+    if (oppMask & (1 << i)) oled.fillRect(x, y, 6, 7, SSD1306_WHITE);
+    else oled.drawRect(x, y, 6, 7, SSD1306_WHITE);
+  }
+}
+
 void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자
   if (sharpPin == 255) snprintf(out, n, "--");
   else if (sharpCm == 255) snprintf(out, n, ">80");
@@ -1012,10 +1079,10 @@ void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자
 
 void buildInfo() {
   snprintf(robotInfo, sizeof(robotInfo),
-           "robot=soccer;fw=roboblock-soccer-0.4;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u",
+           "robot=soccer;fw=roboblock-soccer-0.5;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;opp=%d,%d,%d;opph=%d",
            robotName, PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
            PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL, sharpPin,
-           calA, calB, calFarMv, cal20Mv);
+           calA, calB, calFarMv, cal20Mv, oppPin[0], oppPin[1], oppPin[2], oppActiveHigh ? 1 : 0);
 }
 
 void loadMotorPins() {
@@ -1082,6 +1149,17 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
     case 0x05:
       if (n >= 3 && pinAllowed(d[1])) { pinMode(d[1], OUTPUT); digitalWrite(d[1], d[2] ? HIGH : LOW); }
       break;
+    case 0x0A:
+      if (n >= 5 && oppPinOk(d[1]) && oppPinOk(d[2]) && oppPinOk(d[3])) {
+        for (int i = 0; i < 3; i++) oppPin[i] = d[1 + i];
+        oppActiveHigh = d[4] != 0;
+        uint8_t b[3] = {(uint8_t)oppPin[0], (uint8_t)oppPin[1], (uint8_t)oppPin[2]};
+        prefs.begin("x4wd", false); prefs.putBytes("opp", b, 3); prefs.putUChar("opph", oppActiveHigh ? 1 : 0); prefs.end();
+        setupOpp(); oppMask = 0; oppPrev = 0;
+        buildInfo(); rlSetInfo(robotInfo);
+        Serial.printf("상대 감지 센서 핀: %d %d %d (감지 %s)\n", oppPin[0], oppPin[1], oppPin[2], oppActiveHigh ? "HIGH" : "LOW");
+      }
+      break;
     case 0x09:
       if (n >= 2) {
         if (d[1] == 0) { calFarMv = 0; cal20Mv = 0; }
@@ -1101,7 +1179,12 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
       }
       break;
     case 0x07:
-      if (n >= 9) applyMotorPins(d + 1, true);
+      if (n >= 9) {
+        applyMotorPins(d + 1, true);
+        bool clash = false;                 // 모터와 겹친 상대 감지 핀은 끈다
+        for (int i = 0; i < 3; i++) if (!oppPinOk(oppPin[i])) { oppPin[i] = 255; clash = true; }
+        if (clash) { setupOpp(); buildInfo(); rlSetInfo(robotInfo); }
+      }
       break;
     case 0x06:
       if (n >= 3 && d[1] < 4) setWheel(d[1], (int8_t)d[2]);
@@ -1114,7 +1197,7 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
 // 상태 (20바이트, 10 Hz)
 //   0: 0xA1   1: 모드(0 조종, 1 블록)   2: 플래그(bit0 컨트롤러 연결, bit1 안전 정지, bit2 BOOT 눌림, bit3 BOOT 짧게 눌림)
 //   3~6: 바퀴 출력 FL FR BL BR (int8 %)   7: 제동 비트(FL=bit0 … BR=bit3)
-//   8~9: 순번   10~13: millis()   14~15: Sharp 전압(mV)   16: Sharp 거리(cm, 0=없음, 255=80 cm 넘음)
+//   8~9: 순번   10~13: millis()   14~15: Sharp 전압(mV)   16: Sharp 거리(cm, 0=없음, 255=80 cm 넘음)   17: 상대 감지(bit0 왼 bit1 가운데 bit2 오른)
 void sendWebStatus() {
   static unsigned long last = 0;
   if (millis() - last < 100) return;
@@ -1131,7 +1214,8 @@ void sendWebStatus() {
   uint32_t ms = millis();
   memcpy(s + 10, &ms, 4);
   s[14] = sharpMv & 0xFF;  s[15] = sharpMv >> 8;  s[16] = sharpCm;
-  rlSendStatus(s, 17);
+  s[17] = oppMask;
+  rlSendStatus(s, 18);
 }
 
 void startRoboLink() {
@@ -1159,6 +1243,9 @@ void setup() {
   loadMotorPins();
   loadSharpPin();
   setupSharp();
+  loadOppPins();
+  for (int i = 0; i < 3; i++) if (!oppPinOk(oppPin[i])) oppPin[i] = 255;
+  setupOpp();
   for (int i = 0; i < 4; i++) for (int k = 0; k < 2; k++) { pinMode(PIN_OF[i][k], OUTPUT); digitalWrite(PIN_OF[i][k], LOW); }
 
   Serial.begin(115200);
@@ -1233,6 +1320,7 @@ void loop() {
 
   checkBootButton();             // BOOT 버튼 3초 유지 → 페어링 초기화, 짧게 → 블록의 로봇 버튼
   readSharp();
+  readOpp();
   sendWebStatus();
 
 #if USE_TFT
