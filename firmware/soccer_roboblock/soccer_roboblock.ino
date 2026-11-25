@@ -896,6 +896,7 @@ void leaveWebMode() {
 //   0x05 핀 값        : 디지털 출력 (모터·OLED·BOOT·플래시·입력 전용 핀은 거부)
 //   0x06 바퀴 값      : 바퀴 하나만 (0~3, int8 %)
 //   0x08 핀           : Sharp 거리 센서 핀 (32~39 ADC1, 255 = 없음) → NVS에 저장
+//   0x09 단계         : Sharp 보정 (0 = 지우기, 1 = 지금 값을 '빈 공간', 2 = 지금 값을 '흰 종이 20 cm') → NVS에 저장
 //   0x07 핀×8         : 바퀴 핀 설정 FL_IN1 FL_IN2 FR_IN1 FR_IN2 BL_IN1 BL_IN2 BR_IN1 BR_IN2 → 적용하고 NVS에 저장
 bool pinAllowed(int p) {
   if (p < 0 || p > 39) return false;
@@ -925,6 +926,11 @@ uint16_t sharpMv = 0;                    // 출력 전압 (mV)
 uint8_t sharpCm = 0;                     // 0 = 센서 없음, 255 = 80 cm보다 멀다, 그 밖 = cm
 uint16_t sharpBuf[5] = {0};
 uint8_t sharpIdx = 0;
+float sharpEma = 0;                      // 중앙값을 한 번 더 부드럽게 (지수 평균)
+// 보정: 실제전압 = calA × 측정전압 + calB. 센서마다 바닥 전압이 달라(배선·복제품) 두 점으로 맞춘다.
+//   빈 공간(80 cm 넘음) = 0.40 V, 흰 종이 20 cm = 1.30 V (GP2Y0A21 대표값)
+float calA = 1.0f, calB = 0.0f;
+uint16_t calFarMv = 0, cal20Mv = 0;      // 보정 때 잰 원래 전압 (0 = 아직 안 함)
 
 bool sharpPinOk(int p) {
   if (p == 255) return true;
@@ -942,8 +948,31 @@ void setupSharp() {
 void loadSharpPin() {
   prefs.begin("x4wd", true);
   int v = prefs.getUChar("sharp", 36);
+  calA = prefs.getFloat("sca", 1.0f);
+  calB = prefs.getFloat("scb", 0.0f);
+  calFarMv = prefs.getUShort("scf", 0);
+  cal20Mv = prefs.getUShort("sc2", 0);
   prefs.end();
   if (sharpPinOk(v)) sharpPin = v;
+  if (!(calA > 0.3f && calA < 3.0f) || !(calB > -2.0f && calB < 1.0f)) { calA = 1.0f; calB = 0.0f; }
+}
+
+// 보정 계산: 두 점이 있으면 기울기·절편, 빈 공간만 있으면 바닥 전압만 0.40 V로 내림
+void computeSharpCal() {
+  calA = 1.0f; calB = 0.0f;
+  float vf = calFarMv / 1000.0f, v20 = cal20Mv / 1000.0f;
+  if (calFarMv && cal20Mv && v20 > vf + 0.2f) {
+    calA = (1.30f - 0.40f) / (v20 - vf);
+    calB = 0.40f - calA * vf;
+    if (!(calA > 0.3f && calA < 3.0f)) { calA = 1.0f; calB = 0.40f - vf; }
+  } else if (calFarMv && vf > 0.40f) {
+    calB = 0.40f - vf;
+  }
+  prefs.begin("x4wd", false);
+  prefs.putFloat("sca", calA); prefs.putFloat("scb", calB);
+  prefs.putUShort("scf", calFarMv); prefs.putUShort("sc2", cal20Mv);
+  prefs.end();
+  Serial.printf("Sharp 보정: 빈 공간 %u mV, 20 cm %u mV → 실제 = %.3f × 측정 %+.3f V\n", calFarMv, cal20Mv, calA, calB);
 }
 
 // 8 ms마다 한 번 읽고, 최근 5개의 중앙값으로 튀는 값을 거른다
@@ -957,8 +986,10 @@ void readSharp() {
   uint16_t t[5];
   memcpy(t, sharpBuf, sizeof(t));
   for (int i = 1; i < 5; i++) for (int j = i; j > 0 && t[j - 1] > t[j]; j--) { uint16_t x = t[j]; t[j] = t[j - 1]; t[j - 1] = x; }
-  sharpMv = t[2];
-  float v = sharpMv / 1000.0f;
+  sharpEma = sharpEma <= 0 ? t[2] : sharpEma + 0.35f * (t[2] - sharpEma);
+  sharpMv = (uint16_t)(sharpEma + 0.5f);                 // 측정 전압 (보정 전)
+  float raw = sharpMv / 1000.0f;
+  float v = calA * raw + calB;                           // 보정한 전압
   if (v < 0.42f) sharpCm = 255;                        // 80 cm보다 멀거나 앞에 아무것도 없음
   else {
     float cm = 29.988f * powf(v, -1.173f);             // GP2Y0A21YK0F 근사식
@@ -967,8 +998,8 @@ void readSharp() {
 #if SHARP_SERIAL
   if (millis() - lastPrint >= 500) {
     lastPrint = millis();
-    if (sharpCm == 255) Serial.printf("Sharp GPIO%d: %.2f V → 80 cm 넘음\n", sharpPin, v);
-    else Serial.printf("Sharp GPIO%d: %.2f V → %d cm\n", sharpPin, v, sharpCm);
+    if (sharpCm == 255) Serial.printf("Sharp GPIO%d: 측정 %.2f V (보정 %.2f V) → 80 cm 넘음\n", sharpPin, raw, v);
+    else Serial.printf("Sharp GPIO%d: 측정 %.2f V (보정 %.2f V) → %d cm\n", sharpPin, raw, v, sharpCm);
   }
 #endif
 }
@@ -981,9 +1012,10 @@ void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자
 
 void buildInfo() {
   snprintf(robotInfo, sizeof(robotInfo),
-           "robot=soccer;fw=roboblock-soccer-0.3;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d",
+           "robot=soccer;fw=roboblock-soccer-0.4;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u",
            robotName, PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
-           PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL, sharpPin);
+           PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL, sharpPin,
+           calA, calB, calFarMv, cal20Mv);
 }
 
 void loadMotorPins() {
@@ -1049,6 +1081,15 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
     }
     case 0x05:
       if (n >= 3 && pinAllowed(d[1])) { pinMode(d[1], OUTPUT); digitalWrite(d[1], d[2] ? HIGH : LOW); }
+      break;
+    case 0x09:
+      if (n >= 2) {
+        if (d[1] == 0) { calFarMv = 0; cal20Mv = 0; }
+        else if (d[1] == 1) calFarMv = sharpMv;
+        else if (d[1] == 2) cal20Mv = sharpMv;
+        computeSharpCal();
+        buildInfo(); rlSetInfo(robotInfo);
+      }
       break;
     case 0x08:
       if (n >= 2 && sharpPinOk(d[1])) {

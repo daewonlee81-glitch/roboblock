@@ -159,6 +159,7 @@ select.warn{border-color:var(--accent)}
 .sns-th{position:absolute;top:0;bottom:0;left:87.5%;width:2px;background:var(--stop)}
 .sns-dot{position:absolute;top:2px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:var(--spark);left:0;transition:left .1s linear}
 .sns-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px;font-variant-numeric:tabular-nums}
+.sns-cal{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:10px;font-size:13px}
 .sns-help{font-size:13px}
 .sns-help summary{cursor:pointer;font-weight:600;color:var(--spark)}
 .sns-help ol{margin:8px 0;padding-left:20px;display:flex;flex-direction:column;gap:6px;line-height:1.55}
@@ -283,6 +284,15 @@ select.warn{border-color:var(--accent)}
         </div>
         <canvas id="snsSpark" width="600" height="70" aria-label="최근 10초 거리 그래프"></canvas>
         <div class="meta" id="snsHint"></div>
+        <div class="sns-cal" id="snsCal" hidden>
+          <div><b>센서 보정</b> <span class="meta" id="snsCalState"></span></div>
+          <div class="meta">센서마다 바닥 전압이 달라 두 번 재서 맞춥니다. 보정 값은 로봇에 저장됩니다.</div>
+          <div class="row">
+            <button type="button" class="btn sm" id="calFar">① 앞을 비우고 "빈 공간" 저장</button>
+            <button type="button" class="btn sm" id="cal20">② 흰 종이를 20 cm에 두고 "20 cm" 저장</button>
+            <button type="button" class="btn sm" id="calClr">보정 지우기</button>
+          </div>
+        </div>
         <details class="sns-help">
           <summary>값이 이상할 때 (예: 11~24 cm만 나옴)</summary>
           <ol>
@@ -2297,7 +2307,15 @@ function updateSensorCard(now){
   if (pill.textContent !== state){ pill.textContent = state; pill.className = 'pill' + (kind ? ' ' + kind : ''); }
   const hintEl = $('#snsHint'); if (hintEl.textContent !== hint) hintEl.textContent = hint;
   $('#snsCm').textContent = (real && (noSignal || stale)) ? '--' : far ? '>80 cm' : `${Math.round(cm)} cm`;
-  $('#snsSub').textContent = real ? `${(mv/1000).toFixed(2)} V · GPIO ${d.pins.OUT} (SVP)` : `가상 값 · GPIO ${d.pins.OUT}`;
+  const cal = sharpCal();
+  const corr = real ? cal.a*(mv/1000) + cal.b : 0;
+  $('#snsSub').textContent = real ? (cal.on ? `측정 ${(mv/1000).toFixed(2)} V → 보정 ${Math.max(0, corr).toFixed(2)} V · SVP` : `${(mv/1000).toFixed(2)} V · GPIO ${d.pins.OUT} (SVP)`) : `가상 값 · GPIO ${d.pins.OUT}`;
+  const calBox = $('#snsCal'), showCal = real && link.info.scal !== undefined;
+  if (calBox.hidden === showCal) calBox.hidden = !showCal;
+  if (showCal){
+    const st = cal.on ? `적용됨 — 빈 공간 ${(cal.far/1000).toFixed(2)} V` + (cal.c20 ? `, 20 cm ${(cal.c20/1000).toFixed(2)} V` : ' (20 cm도 재면 더 정확)') : '안 함';
+    const el = $('#snsCalState'); if (el.textContent !== st) el.textContent = st;
+  }
   const shown = far ? 80 : Math.max(0, Math.min(80, cm));
   $('#snsFill').style.width = (shown/80*100) + '%';
   $('#snsDot').style.left = (shown/80*100) + '%';
@@ -2323,6 +2341,24 @@ function updateSensorCard(now){
   }
 }
 
+
+/* Sharp 보정 (펌웨어 0.4+): 실제전압 = a × 측정전압 + b. 빈 공간 → 0.40 V, 흰 종이 20 cm → 1.30 V */
+function sharpCal(){
+  const [a, b] = (link.info.scal || '1,0').split(',').map(Number);
+  const [far, c20] = (link.info.scap || '0,0').split(',').map(Number);
+  return {a: isFinite(a) ? a : 1, b: isFinite(b) ? b : 0, far, c20, on: Math.abs(a - 1) > 1e-3 || Math.abs(b) > 1e-3};
+}
+async function sharpCalStep(step){
+  if (!link.on) return;
+  const msg = {0:'보정을 지웠습니다.', 1:'"빈 공간" 값을 저장했습니다. 이제 흰 종이를 20 cm에 두고 ②를 누르세요.', 2:'"20 cm" 값을 저장했습니다. 손이나 종이를 움직여 거리가 맞는지 보세요.'}[step];
+  linkQueue([0x09, step]);
+  await new Promise(r => setTimeout(r, 500));
+  try{ link.info = parseInfo(new TextDecoder().decode(await link.inf.readValue())); setMsg(msg); }
+  catch(e){ setMsg('보정 결과를 읽지 못했습니다: ' + e.message); }
+}
+$('#calFar').addEventListener('click', () => sharpCalStep(1));
+$('#cal20').addEventListener('click', () => sharpCalStep(2));
+$('#calClr').addEventListener('click', () => sharpCalStep(0));
 /* ───────────── 출발 대기 시간 ─────────────
    실행을 누른 뒤 출발까지 기다리는 시간. 축구로봇·미들봇은 바로, 스모는 대회처럼 3초가 기본. 로봇마다 기억한다. */
 function startDelaySec(){ const v = store.get('rb.delay.' + robotKey, null); return v == null ? ROBOTS[robotKey].delay/1000 : Number(v); }
@@ -2403,7 +2439,7 @@ setWireFit(store.get('rb.wireFit', true) !== false);
 applySplit();
 
 /* ───────────── 정보 · 개발자 · 버그 신고 ───────────── */
-const APP_VERSION = '0.14';
+const APP_VERSION = '0.15';
 const BUG_URL = 'https://github.com/daewonlee81-glitch/roboblock/issues/new';
 const diagErrors = [];
 window.addEventListener('error', e => { diagErrors.push(String(e.message || e.error || e).slice(0, 200)); if (diagErrors.length > 5) diagErrors.shift(); });
