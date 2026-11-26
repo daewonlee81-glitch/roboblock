@@ -516,6 +516,9 @@ char robotName[24] = "RoboBlock";        // 웹 블루투스 이름 (OLED에도 
 unsigned long pcBannerUntil = 0;         // PC 연결·해제 순간 큰 글씨 안내를 보여 줄 시각
 uint16_t statusSeq = 0;
 bool bootShortPress = false;             // BOOT 짧게 누름 (블록의 "로봇 버튼을 누르면")
+uint8_t edgeMode = 1;                    // 흰 테두리 멈춤 0 끔 / 1 켬 (아래 '흰 테두리 멈춤' 설명)
+bool edgeLatched = false;                // 흰 테두리에 걸려 앞으로 못 가는 중
+uint16_t edgeHits = 0;
 
 int chIndex(int chF) {                   // IN1 채널 번호 → 바퀴 번호
   for (int i = 0; i < 4; i++) if (CH_OF[i][0] == chF) return i;
@@ -743,6 +746,7 @@ void updateTFT() {
     oled.printf("BL%+4d  BR%+4d %s", motorPct[2], motorPct[3], dtxt);
     oled.setCursor(0, 52);
     if (webTimedOut) oled.print("SIGNAL LOST - BRAKE");
+    else if (edgeLatched) oled.print("EDGE! BACK/TURN");
     else oled.printf("> %.16s", webText);
     drawColor(52);
     oled.display();
@@ -1113,6 +1117,14 @@ int floorPin[2] = {18, 19};              // 왼쪽, 오른쪽 (255 = 안 씀). �
 uint8_t floorMask = 0;                   // bit0 왼쪽 흰색, bit1 오른쪽 흰색
 uint8_t floorPrev = 0;
 
+// ---- 흰 테두리 멈춤 (가장자리 보호) ----
+//   바닥 IR 하나라도 흰색이면 '앞으로 가는' 출력을 바로 막고 능동 제동한다.
+//   후진·제자리 회전은 허용 → 블록 프로그램이 "후진 → 회전"으로 빠져나올 수 있다.
+//   한 번 걸리면 잠금(edgeLatched): 날이 테두리를 넘어 바닥 밖(검정으로 읽힘)에 있어도
+//   후진이나 회전 명령이 올 때까지 앞으로 가지 않는다.
+//   edgeMode: 0 = 끔, 1 = 켬(기본, 블록·Xbox 모드 모두). 웹 에디터(명령 0x0D)에서 바꾸면 NVS에 저장.
+//   (edgeMode · edgeLatched 변수는 위쪽 '로보블록 상태'에 있다)
+
 // 디지털 입력으로 쓸 수 있는 핀인가 (모터·OLED·Sharp·색 센서·부팅 핀과 겹치지 않게)
 bool inPinOk(int p) {
   if (p < 0 || p > 39 || (p >= 6 && p <= 11) || p == 37 || p == 38) return false;
@@ -1153,6 +1165,38 @@ void readFloor() {
     Serial.printf("바닥 IR: 왼쪽 %s  오른쪽 %s\n", floorMask & 1 ? "흰색" : "검정", floorMask & 2 ? "흰색" : "검정");
 #endif
   }
+}
+
+int motorFwdSum() { return motorPct[0] + motorPct[1] + motorPct[2] + motorPct[3]; }
+bool edgeArmed() { return edgeMode != 0 && (floorPin[0] != 255 || floorPin[1] != 255); }
+
+// 앞으로 가는 명령을 지금 막아야 하나 (sum = 네 바퀴 % 합)
+bool edgeBlocks(int sum) { return edgeArmed() && sum > 0 && (floorMask || edgeLatched); }
+
+// 흰 테두리에 걸림 → 제동 + 잠금
+void edgeTrip() {
+  brakeAll();
+  if (!edgeLatched) {
+    edgeLatched = true; edgeHits++;
+    Serial.printf("흰 테두리! 제동 (왼쪽 %s 오른쪽 %s)\n", floorMask & 1 ? "흰색" : "-", floorMask & 2 ? "흰색" : "-");
+  }
+}
+
+// 지금 나가는 출력 검사 — 앞으로 가는데 흰색(또는 잠금)이면 즉시 제동
+void edgeGuard() {
+  if (!edgeArmed()) { edgeLatched = false; return; }
+  int sum = motorFwdSum();
+  bool any = motorPct[0] || motorPct[1] || motorPct[2] || motorPct[3];
+  if (edgeBlocks(sum)) edgeTrip();
+  else if (any && sum <= 0) {
+    edgeLatched = false;               // 후진·제자리 회전으로 빠져나가는 중 → 잠금 해제
+  }
+}
+void loadEdgeMode() {
+  prefs.begin("x4wd", true);
+  edgeMode = prefs.getUChar("edge", 1);
+  prefs.end();
+  if (edgeMode > 1) edgeMode = 1;
 }
 
 void setupOpp() {
@@ -1344,13 +1388,13 @@ void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자 
 
 void buildInfo() {
   snprintf(robotInfo, sizeof(robotInfo),
-           "robot=soccer;fw=roboblock-soccer-0.7.1;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d;flr=%d,%d",
+           "robot=soccer;fw=roboblock-soccer-0.7.2;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d;flr=%d,%d;edge=%d",
            robotName, PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
            PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL,
            sharpS[0].pin, sharpS[0].a, sharpS[0].b, sharpS[0].farMv, sharpS[0].c20Mv,
            sharpS[1].pin, sharpS[1].a, sharpS[1].b, sharpS[1].farMv, sharpS[1].c20Mv,
            sharpS[2].pin, sharpS[2].a, sharpS[2].b, sharpS[2].farMv, sharpS[2].c20Mv, oppPin[0], oppPin[1], oppPin[2], oppActiveHigh ? 1 : 0,
-           OLED_SDA, OLED_SCL, COLOR_R_SDA, COLOR_R_SCL, colorS[0].ok ? 1 : 0, colorS[1].ok ? 1 : 0, floorPin[0], floorPin[1]);
+           OLED_SDA, OLED_SCL, COLOR_R_SDA, COLOR_R_SCL, colorS[0].ok ? 1 : 0, colorS[1].ok ? 1 : 0, floorPin[0], floorPin[1], edgeMode);
 }
 
 void loadMotorPins() {
@@ -1401,7 +1445,13 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
   webTimedOut = false;
   switch (d[0]) {
     case 0x01:
-      if (n >= 5) for (int i = 0; i < 4; i++) setWheel(i, (int8_t)d[1 + i]);
+      if (n >= 5) {
+        int sum = 0;
+        for (int i = 0; i < 4; i++) sum += (int8_t)d[1 + i];
+        if (edgeBlocks(sum)) { edgeTrip(); break; }      // 흰 테두리: 앞으로 가는 명령은 받지 않는다
+        for (int i = 0; i < 4; i++) setWheel(i, (int8_t)d[1 + i]);
+        edgeGuard();
+      }
       break;
     case 0x02:
       brakeAll();
@@ -1428,6 +1478,14 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
         setupFloor(); floorMask = 0; floorPrev = 0;
         buildInfo(); rlSetInfo(robotInfo);
         Serial.printf("바닥 IR 핀: 왼쪽 %d  오른쪽 %d\n", floorPin[0], floorPin[1]);
+      }
+      break;
+    case 0x0D:                                       // 흰 테두리 멈춤 [0 끔 / 1 켬]
+      if (n >= 2) {
+        edgeMode = d[1] ? 1 : 0; edgeLatched = false;
+        prefs.begin("x4wd", false); prefs.putUChar("edge", edgeMode); prefs.end();
+        buildInfo(); rlSetInfo(robotInfo);
+        Serial.printf("흰 테두리 멈춤: %s\n", edgeMode ? "켬" : "끔");
       }
       break;
     case 0x0B:
@@ -1500,7 +1558,8 @@ void sendWebStatus() {
   s[0] = 0xA1;
   s[1] = webMode ? 1 : 0;
   s[2] = (myCtl && myCtl->isConnected() ? 1 : 0) | (webTimedOut ? 2 : 0) |
-         (digitalRead(BOOT_BTN_PIN) == LOW ? 4 : 0) | (bootShortPress ? 8 : 0);
+         (digitalRead(BOOT_BTN_PIN) == LOW ? 4 : 0) | (bootShortPress ? 8 : 0) |
+         (edgeLatched ? 16 : 0) | (edgeArmed() ? 32 : 0);
   bootShortPress = false;
   for (int i = 0; i < 4; i++) s[3 + i] = (uint8_t)motorPct[i];
   s[7] = brakeMask;
@@ -1538,6 +1597,7 @@ void setup() {
   loadSharpPin();
   setupSharp();
   loadFloorPins();
+  loadEdgeMode();
   setupFloor();
   loadOppPins();
   for (int i = 0; i < 3; i++) if (!oppPinOk(oppPin[i])) oppPin[i] = 255;
@@ -1602,6 +1662,7 @@ void loop() {
   if (webMode) {
     uint8_t buf[20], n;
     while (rlPopCommand(buf, &n)) handleWebCommand(buf, n);
+    readFloor(); edgeGuard();
     if (!webTimedOut && millis() - lastWebCmdMs > WEB_TIMEOUT_MS) {
       brakeAll();                // 명령이 끊기면 즉시 능동 제동
       webTimedOut = true;
@@ -1610,6 +1671,7 @@ void loop() {
     if (updated && myCtl && myCtl->isConnected() && myCtl->hasData()) {
       handleInput(myCtl);
     }
+    readFloor(); edgeGuard();
     if (!myCtl || !myCtl->isConnected()) {
       brakeAll();                // 컨트롤러 없으면 즉시 제동 유지
     }
@@ -1627,5 +1689,6 @@ void loop() {
   updateTFT();
 #endif
 
-  delay(10);                     // 응답성을 위해 약간 더 자주 폴링
+  // 10 ms 쉬는 동안에도 바닥 IR을 3 ms마다 보고 흰 테두리면 바로 제동 (2 m/s면 10 ms에 2 cm)
+  for (int k = 0; k < 5; k++) { delay(2); readFloor(); edgeGuard(); }
 }
