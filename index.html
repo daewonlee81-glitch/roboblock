@@ -168,6 +168,8 @@ select.warn{border-color:var(--accent)}
 .sns-ref th,.sns-ref td{border:1px solid var(--line);padding:4px 7px;text-align:center;white-space:nowrap}
 .sns-ref thead th{color:var(--muted);font-weight:600}
 #snsSpark{width:100%;height:70px;display:block;border-radius:8px;background:var(--ws-bg)}
+#radar{width:100%;display:block;border-radius:10px;background:var(--ws-bg);touch-action:none;cursor:grab}
+#radar.drag{cursor:grabbing}
 @media (max-width:480px){ .sns{grid-template-columns:minmax(0,1fr)} }
 .sec{display:flex;flex-direction:column;gap:10px;min-width:0}
 .sec + .sec{border-top:1px solid var(--line);padding-top:12px}
@@ -296,6 +298,11 @@ select.warn{border-color:var(--accent)}
 
       <div class="card" id="sensorCard" hidden>
         <div class="head"><h2>센서 확인 · 실시간</h2></div>
+        <div class="sec" id="radarBox" hidden>
+          <div class="sec-head"><b>위에서 본 로봇과 물체</b><button type="button" class="btn sm" id="radarToggle" aria-pressed="true">가상 상대 끄기</button></div>
+          <canvas id="radar" aria-label="로봇을 위에서 본 그림: 거리 센서 3개의 시야와 감지된 물체"></canvas>
+          <div class="meta" id="radarHint"></div>
+        </div>
         <div class="sec" id="oppBox" hidden>
           <div class="sec-head"><b>상대 감지 · Sharp GP2Y0D (디지털, 80 cm)</b><span class="pill" id="oppState">화면 미리보기</span></div>
           <div class="opp-row" id="oppRow"></div>
@@ -2468,6 +2475,130 @@ function sharpDev(){ const list = sharpDevs(); return list.find(d => sharpSide(d
 function pinLabel(p){ return p === 36 ? 'SVP (GPIO 36)' : p === 39 ? 'SVN (GPIO 39)' : `GPIO ${p}`; }
 function sharpKey(d, base){ return base + (sharpSide(d) === 'C' ? '' : sharpSide(d)); }   // info 키: sharp / sharpL / sharpR
 // 거리 센서 3칸: 누르면 아래에 그 센서를 자세히
+/* ───────────── 레이더: 로봇을 위에서 본 그림 ─────────────
+   로봇 기준 좌표(cm): 하판 가운데가 원점, 앞 = +y, 오른쪽 = +x. 앞판 세트(sumo_front_set) 치수 기준.
+   연결 전에는 가상 상대(15×15 cm)를 끌어 놓으면 센서마다 광선 교차로 거리를 계산해 가상 값으로 넣는다. */
+const RADAR_GEOM = {C:{x:0, y:8.0, a:0}, L:{x:-7.3, y:8.1, a:-45}, R:{x:7.3, y:8.1, a:45}};
+const RADAR_IR = {L:{x:-7.95, y:9.5}, R:{x:7.95, y:9.5}};
+const RADAR_BOX = 7.5, RADAR_FAR = 80, RADAR_NEAR = 10, RADAR_SEE = 70;
+const radar = (() => { const d = store.get('rb.radar', null) || {}; return {on: d.on !== false, x: Number.isFinite(d.x) ? d.x : 0, y: Number.isFinite(d.y) ? Math.max(20.9, d.y) : 40, drag:false, sig:''}; })();
+function radarSave(){ store.set('rb.radar', {on: radar.on, x: radar.x, y: radar.y}); }
+function radarDir(a){ const r = a*Math.PI/180; return [Math.sin(r), Math.cos(r)]; }
+// 광선(원점 p, 방향 d)이 상자(가운데 c, 반쪽 h)에 처음 닿는 거리. 안 닿으면 null
+function radarRayBox(px, py, dx, dy, cx, cy, h){
+  let t0 = -Infinity, t1 = Infinity;
+  for (const [p, d, c] of [[px, dx, cx], [py, dy, cy]]){
+    if (Math.abs(d) < 1e-9){ if (p < c - h || p > c + h) return null; continue; }
+    let a = (c - h - p)/d, b = (c + h - p)/d; if (a > b) [a, b] = [b, a];
+    t0 = Math.max(t0, a); t1 = Math.min(t1, b);
+  }
+  if (t1 < Math.max(t0, 0)) return null;
+  return Math.max(t0, 0);
+}
+// 센서 하나의 가상 거리 (cm). 시야 가운데와 ±3°의 가장 가까운 값. null = 80 cm 넘음
+function radarVirtualDist(side){
+  const g = RADAR_GEOM[side]; let best = null;
+  for (const da of [-3, 0, 3]){
+    const [dx, dy] = radarDir(g.a + da), t = radarRayBox(g.x, g.y, dx, dy, radar.x, radar.y, RADAR_BOX);
+    if (t != null && (best == null || t < best)) best = t;
+  }
+  if (best == null || best > RADAR_FAR) return null;
+  return Math.max(RADAR_NEAR, best);
+}
+function radarVirtualActive(){ return radar.on && !sharpDevs().some(isRealSensor); }
+// 가상 상대가 켜져 있으면 실제 값이 오지 않는 Sharp 장치에 가상 거리를 넣는다 (슬라이더도 맞춤)
+function applyRadarVirtual(){
+  if (!radarVirtualActive()) return;
+  for (const d of sharpDevs()){
+    if (isRealSensor(d)) continue;
+    const v = radarVirtualDist(sharpSide(d)), st = R(d);
+    st.far = v == null; st.value = v == null ? RADAR_FAR : Math.round(v);
+    const el = document.getElementById('vi-' + robotKey + '-' + sid(d.id)); if (el && document.activeElement !== el) el.value = String(st.value);
+  }
+}
+function radarLayout(){
+  const cv = $('#radar'), w = Math.max(240, cv.clientWidth), h = Math.round(Math.min(340, w*0.8));
+  const sc = Math.min(w/120, h/100), dpr = window.devicePixelRatio || 1;   // 좌우 ±60 cm, 앞 86 cm까지 보이게
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){ cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr); cv.style.height = h + 'px'; }
+  const yTop = (h/sc) - 14;                       // 화면 위쪽 끝의 y (cm)
+  return {cv, w, h, sc, dpr, X: x => w/2 + x*sc, Y: y => (yTop - y)*sc, toWorld: (px, py) => [(px - w/2)/sc, yTop - py/sc]};
+}
+function drawRadar(){
+  const L = radarLayout(), c = L.cv.getContext('2d'), css = getComputedStyle(document.documentElement), V = k => css.getPropertyValue(k).trim();
+  c.setTransform(L.dpr, 0, 0, L.dpr, 0, 0); c.clearRect(0, 0, L.w, L.h);
+  const virt = radarVirtualActive(), font = FONT_FAMILY;
+  // 거리 고리 (앞 센서 기준 20·40·60·80 cm)
+  c.strokeStyle = V('--line'); c.fillStyle = V('--muted'); c.lineWidth = 1; c.font = '11px ' + font;
+  for (const r of [20, 40, 60, 80]){
+    c.beginPath(); c.arc(L.X(0), L.Y(8), r*L.sc, Math.PI*1.05, Math.PI*1.95); c.stroke();
+    const la = 24*Math.PI/180; c.fillText(r + ' cm', L.X(r*Math.sin(la)) + 3, L.Y(8 + r*Math.cos(la)) + 12);   // 앞 센서 줄과 겹치지 않게 비스듬히
+  }
+  // 센서 시야 (±15°) 와 감지
+  const sens = sharpDevs(), hits = [];
+  for (const d of sens){
+    const side = sharpSide(d), g = RADAR_GEOM[side]; if (!g) continue;
+    const st = R(d), real = isRealSensor(d), stale = real && performance.now() - link.lastStatus > 1500;
+    const dist = (stale || st.far || !(st.value > 0)) ? null : Math.min(RADAR_FAR, st.value);
+    const seen = dist != null && dist < RADAR_SEE;
+    c.beginPath(); c.moveTo(L.X(g.x), L.Y(g.y));
+    for (let a = -15; a <= 15; a += 3){ const [dx, dy] = radarDir(g.a + a); c.lineTo(L.X(g.x + dx*RADAR_FAR), L.Y(g.y + dy*RADAR_FAR)); }
+    c.closePath(); c.globalAlpha = seen ? 0.22 : 0.10; c.fillStyle = seen ? V('--stop') : V('--spark'); c.fill(); c.globalAlpha = 1;
+    const [dx, dy] = radarDir(g.a);
+    c.strokeStyle = seen ? V('--stop') : V('--spark'); c.setLineDash([4, 4]); c.beginPath(); c.moveTo(L.X(g.x), L.Y(g.y)); c.lineTo(L.X(g.x + dx*RADAR_FAR), L.Y(g.y + dy*RADAR_FAR)); c.stroke(); c.setLineDash([]);
+    if (dist != null) hits.push({x: g.x + dx*dist, y: g.y + dy*dist, seen, real});
+    const tx = g.x + dx*(RADAR_FAR + 4), ty = g.y + dy*(RADAR_FAR + 4);
+    const lab = `${SIDE_KO[side]} ${dist == null ? (stale ? '--' : '>80') : Math.round(dist)}${dist == null && stale ? '' : ' cm'}`;
+    c.font = '600 12px ' + font; c.fillStyle = seen ? V('--stop') : V('--ink'); c.textAlign = 'center';
+    c.fillText(lab, Math.min(L.w - 34, Math.max(34, L.X(tx))), Math.max(14, L.Y(ty))); c.textAlign = 'left';
+  }
+  // 가상 상대
+  if (virt){
+    const s = RADAR_BOX*L.sc;
+    c.fillStyle = V('--accent'); c.globalAlpha = 0.85; c.fillRect(L.X(radar.x) - s, L.Y(radar.y) - s, 2*s, 2*s); c.globalAlpha = 1;
+    c.strokeStyle = V('--ink'); c.lineWidth = 1.5; c.strokeRect(L.X(radar.x) - s, L.Y(radar.y) - s, 2*s, 2*s);
+    c.fillStyle = V('--accent-ink'); c.font = '600 11px ' + font; c.textAlign = 'center'; c.fillText('가상 상대', L.X(radar.x), L.Y(radar.y) + 4); c.textAlign = 'left';
+  }
+  // 감지 점 (센서가 잰 거리)
+  for (const h of hits){ c.beginPath(); c.arc(L.X(h.x), L.Y(h.y), 5.5, 0, Math.PI*2); c.fillStyle = h.seen ? V('--stop') : V('--muted'); c.fill(); c.lineWidth = 1.5; c.strokeStyle = V('--panel'); c.stroke(); }
+  // 로봇 (바퀴, 하판, 날)
+  c.fillStyle = V('--muted'); c.globalAlpha = 0.7;
+  for (const wx of [-7.4, 6.0]) for (const wy of [-6.0, 2.8]) c.fillRect(L.X(wx), L.Y(wy + 3.0), 1.4*L.sc, 4.0*L.sc);
+  c.globalAlpha = 1; c.fillStyle = V('--chip'); c.strokeStyle = V('--ink'); c.lineWidth = 1.5;
+  c.fillRect(L.X(-5.8), L.Y(5.5), 11.6*L.sc, 11*L.sc); c.strokeRect(L.X(-5.8), L.Y(5.5), 11.6*L.sc, 11*L.sc);
+  c.beginPath(); c.moveTo(L.X(-9.4), L.Y(5.9)); c.lineTo(L.X(9.4), L.Y(5.9)); c.lineTo(L.X(9.4), L.Y(12.4)); c.lineTo(L.X(8.9), L.Y(12.9)); c.lineTo(L.X(-8.9), L.Y(12.9)); c.lineTo(L.X(-9.4), L.Y(12.4)); c.closePath();
+  c.fillStyle = '#b8323e'; c.globalAlpha = 0.85; c.fill(); c.globalAlpha = 1; c.stroke();
+  // 바닥 IR (흰색이면 흰 칸)
+  for (const d of devices.filter(x => x.type === 'irdo' || x.type === 'irfloor' || x.type === 'tcs3472')){
+    const p = RADAR_IR[d.side === 'R' ? 'R' : 'L'], white = d.type === 'tcs3472' ? colorOf(d) === 2 : d.type === 'irdo' ? !!R(d).value : R(d).value > 50;
+    const s = 1.1*L.sc; c.fillStyle = white ? '#ffffff' : '#1b1b1b'; c.strokeStyle = V('--ink'); c.lineWidth = 1;
+    c.fillRect(L.X(p.x) - s, L.Y(p.y) - s, 2*s, 2*s); c.strokeRect(L.X(p.x) - s, L.Y(p.y) - s, 2*s, 2*s);
+  }
+  // 센서 위치
+  for (const d of sens){ const g = RADAR_GEOM[sharpSide(d)]; if (!g) continue; c.fillStyle = '#2a2a32'; c.beginPath(); c.arc(L.X(g.x), L.Y(g.y), 3.2, 0, Math.PI*2); c.fill(); }
+}
+function updateRadar(){
+  const tg = $('#radarToggle'), virtOk = !sharpDevs().some(isRealSensor);
+  if (tg.hidden !== !virtOk) tg.hidden = !virtOk;
+  const t = radar.on ? '가상 상대 끄기' : '가상 상대 켜기'; if (tg.textContent !== t){ tg.textContent = t; tg.setAttribute('aria-pressed', radar.on ? 'true' : 'false'); }
+  const hint = !virtOk ? '로봇이 보낸 실제 거리입니다. 점이 센서가 잰 물체 위치이고, 빨간색이면 70 cm 안(상대가 보임)입니다. 아래 흰·검은 칸은 바닥 IR입니다.'
+    : radar.on ? '노란 상자(가상 상대)를 끌어 옮기면 세 센서의 가상 거리가 바뀝니다. 실행하면 블록이 이 값을 씁니다.'
+    : '가상 상대가 꺼져 있습니다. 거리는 실시간 모니터의 슬라이더 값입니다.';
+  const h = $('#radarHint'); if (h.textContent !== hint) h.textContent = hint;
+  drawRadar();
+}
+(function(){
+  const cv = $('#radar');
+  const move = e => {
+    const r = cv.getBoundingClientRect(), L = radarLayout(), [x, y] = L.toWorld(e.clientX - r.left, e.clientY - r.top);
+    radar.x = Math.max(-55, Math.min(55, Math.round(x*2)/2)); radar.y = Math.max(12.9 + RADAR_BOX + 0.5, Math.min(90, Math.round(y*2)/2));   // 날 끝보다 앞에만 (로봇과 겹치지 않게)
+    applyRadarVirtual(); drawRadar();
+  };
+  cv.addEventListener('pointerdown', e => { if (!radarVirtualActive()) return; radar.drag = true; cv.classList.add('drag'); cv.setPointerCapture(e.pointerId); move(e); e.preventDefault(); });
+  cv.addEventListener('pointermove', e => { if (radar.drag) move(e); });
+  const end = () => { if (!radar.drag) return; radar.drag = false; cv.classList.remove('drag'); radarSave(); };
+  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+  $('#radarToggle').addEventListener('click', () => { radar.on = !radar.on; radarSave(); applyRadarVirtual(); updateRadar(); });
+})();
 const shpUi = {sig:''};
 function updateSharpRow(now){
   const row = $('#shpRow'), list = sharpDevs();
@@ -2614,6 +2745,8 @@ function updateSensorCard(now){
   if (showFlr) updateFloorBox(now, flrs);
   if (showOpp) updateOppBox(now, opps);
   if (showCol) updateColorBox(now, cols);
+  const rb = $('#radarBox'); if (rb.hidden === showSharp) rb.hidden = !showSharp;
+  if (showSharp){ applyRadarVirtual(); updateRadar(); }
   if (!showSharp) return;
   updateSharpRow(now);
   const ttl = `${SIDE_KO[sharpSide(d)]} 거리 · ${pinLabel(d.pins.OUT)}`; if ($('#snsTitle').textContent !== ttl) $('#snsTitle').textContent = ttl;
@@ -2816,7 +2949,7 @@ setWireFit(store.get('rb.wireFit', true) !== false);
 applySplit();
 
 /* ───────────── 정보 · 개발자 · 버그 신고 ───────────── */
-const APP_VERSION = '0.18';
+const APP_VERSION = '0.19';
 const BUG_URL = 'https://github.com/daewonlee81-glitch/roboblock/issues/new';
 const diagErrors = [];
 window.addEventListener('error', e => { diagErrors.push(String(e.message || e.error || e).slice(0, 200)); if (diagErrors.length > 5) diagErrors.shift(); });
