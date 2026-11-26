@@ -85,6 +85,7 @@ dialog.about::backdrop{background:rgba(10,14,20,.55)}
 .edge-row .meta{margin:0}
 #edgeNote.hit{color:var(--pill-err-ink);font-weight:600}
 .sdl{font-size:12px;color:var(--muted)}
+#exampleSel{font:inherit;font-size:13px;padding:6px 6px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);max-width:9.5em}
 #startDelay{font:inherit;font-size:13px;padding:6px 6px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
 .btn.unlink{border-color:var(--stop);color:var(--stop)}
 .btn.unlink:hover{background:var(--stop);color:var(--on-stop)}
@@ -273,6 +274,7 @@ select.warn{border-color:var(--accent)}
       </div>
     </div>
     <div class="group">
+      <select id="exampleSel" aria-label="예제 불러오기" title="예제 프로그램을 불러옵니다. 지금 블록은 Ctrl+Z로 되돌릴 수 있습니다."></select>
       <label class="sdl" for="startDelay" title="실행을 누른 뒤 로봇이 출발하기까지 기다리는 시간">출발</label><select id="startDelay" aria-label="출발 대기 시간"><option value="0">바로</option><option value="1">1초 뒤</option><option value="3">3초 뒤</option><option value="5">5초 뒤</option></select>
       <button type="button" class="btn run" id="runBtn">▶ 실행</button>
       <button type="button" class="btn stop" id="stopBtn" disabled>■ 정지</button>
@@ -884,6 +886,31 @@ const EXAMPLES = {
       ELSE:{block:{type:'rb_wheels', inputs:{L:n(35), R:n(-35)}}}
     }}}}}
   ])) ]}}
+};
+// 스모 '기다렸다 밀기': 제자리에서 기다리다 거리 센서에 상대가 들어오면 돌아서 밀어낸다
+const near = (side, cm) => ({block:{type:'logic_compare', fields:{OP:'LT'}, inputs:{A:{block:{type:'rb_dist', fields:{SIDE:side}}}, B:n(cm)}}});
+const SUMO_AMBUSH = {blocks:{languageVersion:0, blocks:[ Object.assign({x:24, y:24}, chain([
+  {type:'rb_start'},
+  {type:'rb_forever', inputs:{DO:{block:{type:'controls_if', extraState:{elseIfCount:3, hasElse:true}, inputs:{
+    IF0:{block:{type:'logic_operation', fields:{OP:'OR'}, inputs:{A:{block:{type:'rb_edge', fields:{SIDE:'L'}}}, B:{block:{type:'rb_edge', fields:{SIDE:'R'}}}}}},
+    DO0:{block:{type:'rb_drive_time', fields:{DIR:'B'}, inputs:{SPEED:n(60), SEC:n(0.4)}}},
+    IF1:near('C', 50),
+    DO1:{block:{type:'rb_wheels', inputs:{L:n(100), R:n(100)}}},
+    IF2:near('L', 50),
+    DO2:{block:{type:'rb_wheels', inputs:{L:n(-40), R:n(40)}}},
+    IF3:near('R', 50),
+    DO3:{block:{type:'rb_wheels', inputs:{L:n(40), R:n(-40)}}},
+    ELSE:{block:{type:'rb_stop'}}
+  }}}}}
+])) ]}};
+// 예제 고르기 (로봇별). 첫 번째가 처음 열 때 보이는 기본 예제
+const EXAMPLE_LIST = {
+  soccer: [{id:'square', name:'네모 그리기', ws:EXAMPLES.soccer, msg:'예제: 2칸씩 네모 그리기. 실행하면 모터 드라이버 선이 바뀌는 것을 볼 수 있습니다.'}],
+  middle: [{id:'pick', name:'블록 집어 옮기기', ws:EXAMPLES.middle, msg:'예제: 빨간 블록 집어 오른쪽 매트에 놓기 + Xbox Y = 2층 매크로'}],
+  sumo: [
+    {id:'hunt', name:'돌며 찾기', ws:EXAMPLES.sumo, msg:'스모 예제: 바닥이 흰색이면 물러나고, 앞 센서가 보면 돌진, 왼쪽·오른쪽이 보면 그쪽으로 돌기. 모니터의 거리 슬라이더와 "센서 확인"의 바닥 IR 칸으로 시험해 보세요.'},
+    {id:'ambush', name:'기다렸다 밀기', ws:SUMO_AMBUSH, msg:'스모 예제 "기다렸다 밀기": 제자리에서 멈춰 기다리다 앞 50 cm 안에 상대가 오면 100%로 밀고, 왼쪽·오른쪽에 오면 그쪽으로 돌아 앞에 맞춥니다. 흰 테두리면 0.4초 물러납니다. 50을 바꾸면 반응 거리가 바뀝니다 (경기장 지름 80 cm).'}
+  ]
 };
 
 /* ───────────── 작업 공간 ───────────── */
@@ -2387,10 +2414,26 @@ function applyRobot(key, fromUser){
   stopDrive();
   renderAll();
   setStatus('대기', '');
-  setMsg(key === 'sumo' ? '스모 예제: 바닥이 흰색이면 물러나고, 앞 센서가 보면 돌진, 왼쪽·오른쪽이 보면 그쪽으로 돌기. 모니터의 거리 슬라이더와 "센서 확인"의 바닥 IR 칸으로 시험해 보세요.'
-       : key === 'middle' ? '예제: 빨간 블록 집어 오른쪽 매트에 놓기 + Xbox Y = 2층 매크로'
-       : '예제: 2칸씩 네모 그리기. 실행하면 모터 드라이버 선이 바뀌는 것을 볼 수 있습니다.');
+  fillExampleSel();
+  setMsg(EXAMPLE_LIST[key][0].msg);
 }
+function fillExampleSel(){
+  const sel = $('#exampleSel');
+  sel.innerHTML = '<option value="">예제 불러오기…</option>' + EXAMPLE_LIST[robotKey].map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+  sel.value = '';
+}
+$('#exampleSel').addEventListener('change', () => {
+  const sel = $('#exampleSel'), ex = EXAMPLE_LIST[robotKey].find(e => e.id === sel.value);
+  sel.value = ''; sel.blur();
+  if (!ex) return;
+  if (run) endRun('', '');
+  Blockly.Events.setGroup(true);            // 한 번의 Ctrl+Z로 이전 블록으로 되돌리기
+  try{ ws.clear(); Blockly.serialization.workspaces.load(ex.ws, ws, {recordUndo:true}); }
+  finally{ Blockly.Events.setGroup(false); }
+  saveWorkspace();
+  setMsg(ex.msg + ' (이전 블록은 Ctrl+Z)');
+});
+fillExampleSel();
 function applyLevel(lv){
   level = lv; store.set('rb.level', lv);
   document.querySelectorAll('#levelSeg button').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.level) === lv)));
@@ -2992,7 +3035,7 @@ setWireFit(store.get('rb.wireFit', true) !== false);
 applySplit();
 
 /* ───────────── 정보 · 개발자 · 버그 신고 ───────────── */
-const APP_VERSION = '0.22';
+const APP_VERSION = '0.23';
 const BUG_URL = 'https://github.com/daewonlee81-glitch/roboblock/issues/new';
 const diagErrors = [];
 window.addEventListener('error', e => { diagErrors.push(String(e.message || e.error || e).slice(0, 200)); if (diagErrors.length > 5) diagErrors.shift(); });
