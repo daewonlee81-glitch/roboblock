@@ -838,6 +838,7 @@ void onConnect(ControllerPtr ctl) {
   }
 
   Serial.println(" → 연결 승인");
+  edgeLatched = false;
   myCtl = ctl;
   ctl->setColorLED(0, 128, 255);   // 지원 모델만
 }
@@ -928,6 +929,7 @@ void enterWebMode() {
   lastWebCmdMs = millis();
   webTimedOut = false;
   webText[0] = 0;
+  edgeLatched = false;
   Serial.println("웹 에디터 연결 → 블록 모드 (Xbox 컨트롤러 끊음)");
 }
 
@@ -935,6 +937,7 @@ void leaveWebMode() {
   webMode = false;
   pcBannerUntil = millis() + 2000;
   brakeAll();
+  edgeLatched = false;
   BP32.enableNewBluetoothConnections(true);    // 컨트롤러 다시 받기
   Serial.println("웹 에디터 연결 해제 → 조종 모드 (Xbox 컨트롤러를 켜세요)");
 }
@@ -943,6 +946,8 @@ void leaveWebMode() {
 //   0x01 FL FR BL BR : 바퀴 4개 출력 (int8, −100~100 %). 0이면 그 바퀴는 능동 제동
 //   0x02             : 모두 능동 제동
 //   0x03             : 살아 있음 (안전 정지 타이머만 갱신)
+//   0x0D m           : 흰 테두리 멈춤 0 끔 / 1 켬 (NVS 저장)
+//   0x0E             : 흰 테두리 잠금 풀기 (새 실행)
 //   0x04 글자...      : OLED 마지막 줄에 표시 (ASCII, 최대 18자)
 //   0x05 핀 값        : 디지털 출력 (모터·OLED·BOOT·플래시·입력 전용 핀은 거부)
 //   0x06 바퀴 값      : 바퀴 하나만 (0~3, int8 %)
@@ -1388,7 +1393,7 @@ void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자 
 
 void buildInfo() {
   snprintf(robotInfo, sizeof(robotInfo),
-           "robot=soccer;fw=roboblock-soccer-0.7.2;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d;flr=%d,%d;edge=%d",
+           "robot=soccer;fw=roboblock-soccer-0.7.3;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d;flr=%d,%d;edge=%d",
            robotName, PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
            PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL,
            sharpS[0].pin, sharpS[0].a, sharpS[0].b, sharpS[0].farMv, sharpS[0].c20Mv,
@@ -1479,6 +1484,10 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
         buildInfo(); rlSetInfo(robotInfo);
         Serial.printf("바닥 IR 핀: 왼쪽 %d  오른쪽 %d\n", floorPin[0], floorPin[1]);
       }
+      break;
+    case 0x0E:                                       // 흰 테두리 잠금 풀기 (에디터가 프로그램을 새로 실행할 때 보냄)
+      if (edgeLatched) Serial.println("흰 테두리 잠금 해제 (새 실행)");
+      edgeLatched = false;
       break;
     case 0x0D:                                       // 흰 테두리 멈춤 [0 끔 / 1 켬]
       if (n >= 2) {

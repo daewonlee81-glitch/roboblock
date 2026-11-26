@@ -1836,6 +1836,7 @@ async function startRun(){
   const types = new Set(ws.getAllBlocks(false).map(b => b.type));
   run = {stopped:false, tasks:new Set(), vars:new Map(), frames:[], manual:false, padOwned:['rb_pad_pressed','rb_pad_axis','rb_pad_connected'].some(t => types.has(t))};
   pinBlockSig.clear(); oledText = ''; stopDrive();
+  linkQueue([0x0E]);              // 지난 실행에서 걸린 흰 테두리 잠금 풀기 (펌웨어 0.7.3+, 옛 펌웨어는 무시)
   showWholeWiring();
   const delay = startDelayMs(), ts = performance.now();
   setButtons(true);
@@ -2069,6 +2070,7 @@ function startWheelTest(d, dir){
   if (run) endRun('', '');
   const pct = Number($('#mtSpeed').value) || 60, sec = Number($('#mtTime').value) || 1;
   stopDrive(); for (const m of dcMotors()){ const s = R(m); s.cmd = 0; s.brake = true; }
+  linkQueue([0x0E]);
   const s = R(d); s.cmd = dir*pct; s.brake = false;
   wheelTest.until = performance.now() + sec*1000; wheelTest.id = d.id;
   focusDev = d.id; renderWiring(); markFocusRow(); renderMotorPanel(true);
@@ -2220,7 +2222,7 @@ function onStatus(dv){
   const was = link.flags; link.flags = flags; link.lastStatus = performance.now(); noteStatusArrival();
   if (flags & 4) bootDownUntil = performance.now() + 150;
   if (flags & 8){ if (!run) startRun(); else trigger('rb_button'); }
-  if ((flags & 16) && !(was & 16) && run) setMsg('흰 테두리를 만나 로봇이 스스로 멈췄습니다. 후진하거나 제자리에서 돌면 다시 움직입니다.');
+  if ((flags & 16) && !(was & 16) && (run || wheelTest.until > performance.now())) setMsg('바닥 IR이 흰색이라 로봇이 앞으로 가지 않고 멈췄습니다. 후진하거나 제자리에서 돌면 풀리고, 다시 실행해도 풀립니다. 흰 책상 위라면 검은 바닥에 두거나 바닥 IR 패널에서 "흰 테두리에서 멈춤"을 끄세요.');
   if ((flags & 2) && !(was & 2) && run) setMsg('로봇이 0.5초 동안 명령을 못 받아 스스로 제동했습니다. 브라우저 탭을 앞에 두세요.');
   if (dv.byteLength >= 17){
     const mv = dv.getUint16(14, true), cm = dv.getUint8(16);
@@ -2748,7 +2750,7 @@ function updateEdgeUi(stale, noFw){
   btn.disabled = !has;
   let t;
   if (!link.on) t = '로봇이 스스로 판단합니다. 연결하면 켜고 끌 수 있습니다.';
-  else if (noFw || !has) t = '펌웨어 0.7.2부터 됩니다. 최신 펌웨어를 올려 주세요.';
+  else if (noFw || !has) t = '펌웨어 0.7.3부터 됩니다. 최신 펌웨어를 올려 주세요.';
   else if (!on) t = '꺼져 있습니다. 흰 테두리를 넘어도 멈추지 않습니다.';
   else if (hit) t = '흰 테두리! 앞으로 가지 않습니다. 후진하거나 제자리 회전하면 풀립니다.';
   else t = '바닥 IR이 흰색이면 앞으로 가는 명령을 막고 바로 제동합니다. 후진·회전은 됩니다.';
@@ -2989,7 +2991,7 @@ setWireFit(store.get('rb.wireFit', true) !== false);
 applySplit();
 
 /* ───────────── 정보 · 개발자 · 버그 신고 ───────────── */
-const APP_VERSION = '0.20';
+const APP_VERSION = '0.21';
 const BUG_URL = 'https://github.com/daewonlee81-glitch/roboblock/issues/new';
 const diagErrors = [];
 window.addEventListener('error', e => { diagErrors.push(String(e.message || e.error || e).slice(0, 200)); if (diagErrors.length > 5) diagErrors.shift(); });
