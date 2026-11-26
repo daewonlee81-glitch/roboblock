@@ -974,12 +974,15 @@ bool motorPinOk(int p) {
 #define SHARP_SERIAL 1                   // 1이면 시리얼 모니터에 0.5초마다 거리 출력 (센서 확인용)
 const char* SHARP_NAME[3] = {"F", "L", "R"};
 const char* SHARP_KEY[3] = {"", "1", "2"};  // NVS 키 끝 (앞 센서는 예전 키 그대로)
+#define SH_N 9                           // 중앙값에 쓰는 샘플 수 (8 ms × 9 ≈ 72 ms)
+#define SH_JUMP_MV 250                   // 이보다 크게 바뀌면 3번 연속일 때만 따라감
 struct SharpS {
   int pin;                               // 255 = 센서 없음. 웹 에디터(명령 0x08)에서 바꾸면 NVS에 저장
   uint16_t mv;                           // 출력 전압 (mV, 보정 전)
   uint8_t cm;                            // 0 = 센서 없음, 255 = 80 cm보다 멀다, 그 밖 = cm
-  uint16_t buf[5];
+  uint16_t buf[SH_N];
   uint8_t idx;
+  uint8_t jump;                          // 큰 변화가 몇 번 연속됐나 (한 번짜리 튐은 버림)
   float ema;                             // 중앙값을 한 번 더 부드럽게 (지수 평균)
   // 보정: 실제전압 = a × 측정전압 + b. 센서마다 바닥 전압이 달라(배선·복제품) 두 점으로 맞춘다.
   //   빈 공간(80 cm 넘음) = 0.40 V, 흰 종이 20 cm = 1.30 V (GP2Y0A21 대표값)
@@ -999,7 +1002,7 @@ bool sharpPinOk(int p, int self) {
 void setupSharp() {
   for (int i = 0; i < 3; i++) {
     SharpS& sh = sharpS[i];
-    sh.ema = 0; sh.idx = 0; memset(sh.buf, 0, sizeof(sh.buf)); sh.cm = 0; sh.mv = 0;
+    sh.ema = 0; sh.idx = 0; sh.jump = 0; memset(sh.buf, 0, sizeof(sh.buf)); sh.cm = 0; sh.mv = 0;
     if (sh.pin == 255) continue;
     pinMode(sh.pin, INPUT);
     analogSetPinAttenuation(sh.pin, ADC_11db);   // 0~3.1 V 측정
@@ -1060,11 +1063,15 @@ void readSharp() {
     SharpS& sh = sharpS[i];
     if (sh.pin == 255) { sh.cm = 0; sh.mv = 0; continue; }
     sh.buf[sh.idx] = analogReadMilliVolts(sh.pin);
-    sh.idx = (sh.idx + 1) % 5;
-    uint16_t t[5];
+    sh.idx = (sh.idx + 1) % SH_N;
+    uint16_t t[SH_N];
     memcpy(t, sh.buf, sizeof(t));
-    for (int x = 1; x < 5; x++) for (int j = x; j > 0 && t[j - 1] > t[j]; j--) { uint16_t y = t[j]; t[j] = t[j - 1]; t[j - 1] = y; }
-    sh.ema = sh.ema <= 0 ? t[2] : sh.ema + 0.35f * (t[2] - sh.ema);
+    for (int x = 1; x < SH_N; x++) for (int j = x; j > 0 && t[j - 1] > t[j]; j--) { uint16_t y = t[j]; t[j] = t[j - 1]; t[j - 1] = y; }
+    // 튀는 값 거르기: 최근 9개 중앙값 → 큰 변화는 3번 연속일 때만 반영 → 지수 평균
+    float m = t[SH_N / 2], diff = m - sh.ema;
+    if (sh.ema <= 0) sh.ema = m;
+    else if (fabsf(diff) > SH_JUMP_MV) { if (++sh.jump >= 3) { sh.ema += 0.5f * diff; sh.jump = 0; } }
+    else { sh.jump = 0; sh.ema += 0.25f * diff; }
     sh.mv = (uint16_t)(sh.ema + 0.5f);
     float v = sh.a * (sh.mv / 1000.0f) + sh.b;            // 보정한 전압
     if (v < 0.42f) sh.cm = 255;                          // 80 cm보다 멀거나 앞에 아무것도 없음
@@ -1337,7 +1344,7 @@ void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자 
 
 void buildInfo() {
   snprintf(robotInfo, sizeof(robotInfo),
-           "robot=soccer;fw=roboblock-soccer-0.7;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d;flr=%d,%d",
+           "robot=soccer;fw=roboblock-soccer-0.7.1;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d;flr=%d,%d",
            robotName, PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
            PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL,
            sharpS[0].pin, sharpS[0].a, sharpS[0].b, sharpS[0].farMv, sharpS[0].c20Mv,

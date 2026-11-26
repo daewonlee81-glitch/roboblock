@@ -21,7 +21,10 @@ const char* LABELS[3] = {"앞   (SVP 36)", "왼쪽 (SVN 39)", "오른쪽 (34)  "
 Adafruit_SSD1306 oled(128, 64, &Wire, -1);
 bool hasOled = false;
 
-uint16_t buf[3][5];
+#define SH_N 9                    // 중앙값 샘플 수 (8 ms × 9 ≈ 72 ms) — 로봇 펌웨어 0.7.1과 같은 필터
+#define SH_JUMP_MV 250            // 이보다 크게 바뀌면 3번 연속일 때만 따라감 (한 번짜리 튐은 버림)
+uint16_t buf[3][SH_N];
+uint8_t  jumpCnt[3] = {0, 0, 0};
 uint8_t  idx = 0;
 float    ema[3] = {0, 0, 0};
 uint16_t mv[3];
@@ -37,10 +40,10 @@ int toCm(float v) {
   return (int)(d + 0.5f);
 }
 
-uint16_t median5(uint16_t* b) {
-  uint16_t t[5]; memcpy(t, b, sizeof(t));
-  for (int i = 1; i < 5; i++) for (int j = i; j > 0 && t[j - 1] > t[j]; j--) { uint16_t x = t[j]; t[j] = t[j - 1]; t[j - 1] = x; }
-  return t[2];
+uint16_t medianN(uint16_t* b) {
+  uint16_t t[SH_N]; memcpy(t, b, sizeof(t));
+  for (int i = 1; i < SH_N; i++) for (int j = i; j > 0 && t[j - 1] > t[j]; j--) { uint16_t x = t[j]; t[j] = t[j - 1]; t[j - 1] = x; }
+  return t[SH_N / 2];
 }
 
 const char* state(int i) {
@@ -78,13 +81,15 @@ void loop() {
     tRead = now;
     for (int i = 0; i < 3; i++) {
       buf[i][idx] = analogReadMilliVolts(PINS[i]);
-      uint16_t m = median5(buf[i]);
-      ema[i] = ema[i] <= 0 ? m : ema[i] + 0.35f * (m - ema[i]);
+      float m = medianN(buf[i]), diff = m - ema[i];
+      if (ema[i] <= 0) ema[i] = m;
+      else if (fabsf(diff) > SH_JUMP_MV) { if (++jumpCnt[i] >= 3) { ema[i] += 0.5f * diff; jumpCnt[i] = 0; } }
+      else { jumpCnt[i] = 0; ema[i] += 0.25f * diff; }
       mv[i] = (uint16_t)(ema[i] + 0.5f);
       cm[i] = toCm(mv[i] / 1000.0f);
       if (mv[i] < 150) { if (!lowSince[i]) lowSince[i] = now; } else lowSince[i] = 0;
     }
-    idx = (idx + 1) % 5;
+    idx = (idx + 1) % SH_N;
   }
 
   // 시리얼
