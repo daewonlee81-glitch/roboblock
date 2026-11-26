@@ -519,6 +519,8 @@ bool bootShortPress = false;             // BOOT 짧게 누름 (블록의 "로�
 uint8_t edgeMode = 1;                    // 흰 테두리 멈춤 0 끔 / 1 켬 (아래 '흰 테두리 멈춤' 설명)
 bool edgeLatched = false;                // 흰 테두리에 걸려 앞으로 못 가는 중
 uint16_t edgeHits = 0;
+uint8_t edgeSides = 0;                   // 잠금을 건 쪽 (bit0 왼쪽, bit1 오른쪽) — 잠금 동안 에디터에 흰색으로 알린다
+uint8_t floorSeen = 0;                   // 지난 상태 전송 뒤 한 번이라도 흰색이었던 쪽 (짧은 흰색도 놓치지 않게)
 
 int chIndex(int chF) {                   // IN1 채널 번호 → 바퀴 번호
   for (int i = 0; i < 4; i++) if (CH_OF[i][0] == chF) return i;
@@ -1164,6 +1166,7 @@ void readFloor() {
   for (int i = 0; i < 2; i++) if (floorPin[i] != 255 && digitalRead(floorPin[i]) == LOW) now |= 1 << i;
   uint8_t stable = (now & floorPrev) | (floorMask & (now | floorPrev));   // 두 번 연속 같으면 반영
   floorPrev = now;
+  floorSeen |= stable;
   if (stable != floorMask) {
     floorMask = stable;
 #if SHARP_SERIAL
@@ -1181,6 +1184,8 @@ bool edgeBlocks(int sum) { return edgeArmed() && sum > 0 && (floorMask || edgeLa
 // 흰 테두리에 걸림 → 제동 + 잠금
 void edgeTrip() {
   brakeAll();
+  if (floorMask) edgeSides = floorMask;
+  else if (!edgeLatched) edgeSides = 3;           // 흰색 없이 걸림(드묾) → 양쪽으로 알림
   if (!edgeLatched) {
     edgeLatched = true; edgeHits++;
     Serial.printf("흰 테두리! 제동 (왼쪽 %s 오른쪽 %s)\n", floorMask & 1 ? "흰색" : "-", floorMask & 2 ? "흰색" : "-");
@@ -1393,7 +1398,7 @@ void sharpText(char* out, size_t n) {           // OLED용 짧은 거리 글자 
 
 void buildInfo() {
   snprintf(robotInfo, sizeof(robotInfo),
-           "robot=soccer;fw=roboblock-soccer-0.7.3;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d;flr=%d,%d;edge=%d",
+           "robot=soccer;fw=roboblock-soccer-0.7.4;name=%s;FL=%d,%d;FR=%d,%d;BL=%d,%d;BR=%d,%d;oled=%d,%d;boot=0;sharp=%d;scal=%.3f,%.3f;scap=%u,%u;sharpL=%d;scalL=%.3f,%.3f;scapL=%u,%u;sharpR=%d;scalR=%.3f,%.3f;scapR=%u,%u;opp=%d,%d,%d;opph=%d;col=%d,%d,%d,%d;colok=%d,%d;flr=%d,%d;edge=%d",
            robotName, PIN_OF[0][0], PIN_OF[0][1], PIN_OF[1][0], PIN_OF[1][1],
            PIN_OF[2][0], PIN_OF[2][1], PIN_OF[3][0], PIN_OF[3][1], OLED_SDA, OLED_SCL,
            sharpS[0].pin, sharpS[0].a, sharpS[0].b, sharpS[0].farMv, sharpS[0].c20Mv,
@@ -1559,10 +1564,17 @@ void handleWebCommand(const uint8_t* d, uint8_t n) {
 //   0: 0xA1   1: 모드(0 조종, 1 블록)   2: 플래그(bit0 컨트롤러 연결, bit1 안전 정지, bit2 BOOT 눌림, bit3 BOOT 짧게 눌림)
 //   3~6: 바퀴 출력 FL FR BL BR (int8 %)   7: 제동 비트(FL=bit0 … BR=bit3)
 //   8~9: 순번   10~13: millis()   14~15: Sharp 전압(mV)   16: Sharp 거리(cm, 0=없음, 255=80 cm 넘음)   17: 상대 감지(bit0 왼 bit1 가운데 bit2 오른) + 바닥 IR 흰색(bit4 왼 bit5 오른)
+// 에디터에 알리는 바닥 흰색: 지금 흰색 + 지난 전송 뒤 잠깐이라도 흰색 + 흰 테두리 잠금을 건 쪽
+uint8_t floorReport() { return floorMask | floorSeen | (edgeLatched ? edgeSides : 0); }
+
 void sendWebStatus() {
   static unsigned long last = 0;
-  if (millis() - last < 100) return;
+  static uint8_t lastFloor = 0, lastEdge = 0;
+  uint8_t fr = floorReport(), ed = edgeLatched ? 1 : 0;
+  bool urgent = (fr != lastFloor || ed != lastEdge) && millis() - last >= 15;   // 바닥·잠금이 바뀌면 바로 보낸다
+  if (!urgent && millis() - last < 100) return;
   last = millis();
+  lastFloor = fr; lastEdge = ed; floorSeen = 0;
   uint8_t s[20] = {0};
   s[0] = 0xA1;
   s[1] = webMode ? 1 : 0;
@@ -1576,7 +1588,7 @@ void sendWebStatus() {
   uint32_t ms = millis();
   memcpy(s + 10, &ms, 4);
   s[14] = sharpS[0].mv & 0xFF;  s[15] = sharpS[0].mv >> 8;  s[16] = sharpS[0].cm;
-  s[17] = oppMask | (floorMask << 4);           // bit4 바닥 왼쪽 흰색, bit5 바닥 오른쪽 흰색
+  s[17] = oppMask | (fr << 4);           // bit4 바닥 왼쪽 흰색, bit5 바닥 오른쪽 흰색
   rlSendStatus(s, 18);
 }
 
